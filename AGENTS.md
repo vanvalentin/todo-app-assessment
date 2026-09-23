@@ -2,10 +2,6 @@
 
 These instructions apply to the entire repository. Read `README.md` before planning or editing.
 
-## Sub-agent execution
-
-When delegating work to sub-agents, launch them with `gpt-5.6-luna`. If that model is unavailable, fall back to `deepseek/deepseek-flash`.
-
 ## Product and scope
 
 - Implement the MVP and delivery order documented in `README.md`; do not make deferred Figma controls functional unless the task asks for them.
