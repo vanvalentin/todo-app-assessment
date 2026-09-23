@@ -1,4 +1,4 @@
-import express, { type Express } from "express";
+import express, { type Express, type RequestHandler } from "express";
 import { pinoHttp } from "pino-http";
 import type { Logger } from "pino";
 import { errorHandler, notFoundHandler } from "./errors.js";
@@ -15,6 +15,8 @@ export interface AppOptions {
   logger?: Logger;
   healthChecks?: HealthChecks;
   healthCheckTimeoutMs?: number;
+  trustProxy?: boolean;
+  authHandler?: RequestHandler;
   configureRoutes?: (app: Express) => void;
 }
 
@@ -25,6 +27,7 @@ export function createApp(options: AppOptions = {}): Express {
   const app = express();
 
   app.disable("x-powered-by");
+  app.set("trust proxy", options.trustProxy ?? false);
   app.use(
     pinoHttp({
       logger,
@@ -45,6 +48,11 @@ export function createApp(options: AppOptions = {}): Express {
     response.setHeader("x-request-id", id);
     next();
   });
+  // Better Auth's Node adapter must receive the unconsumed request stream.
+  // Mount it before the JSON parser; its own handler validates auth request bodies.
+  if (options.authHandler) {
+    app.all("/api/v1/auth{/*splat}", options.authHandler);
+  }
   app.use(express.json({ limit: "1mb", strict: true }));
 
   app.get("/health/live", (_request, response) => {

@@ -1,12 +1,14 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { createInfrastructure } from "./infrastructure/dependencies.js";
 import { loadEnvironment } from "./config/env.js";
 import { createLogger } from "./logging.js";
 
 export async function startWorker(): Promise<void> {
   const environment = loadEnvironment();
   const logger = createLogger(environment.LOG_LEVEL);
-  logger.info("Worker is idle; no background jobs are configured in phase 1");
+  const infrastructure = createInfrastructure(environment);
+  logger.info("Worker is idle; no background jobs are configured in phase 2 identity");
 
   await new Promise<void>((resolveWorker) => {
     let stopped = false;
@@ -15,8 +17,10 @@ export async function startWorker(): Promise<void> {
       if (stopped) return;
       stopped = true;
       clearInterval(keepAlive);
-      logger.info({ reason }, "Idle worker stopped");
-      resolveWorker();
+      void infrastructure.close().finally(() => {
+        logger.info({ reason }, "Idle worker stopped");
+        resolveWorker();
+      });
     };
     process.once("SIGTERM", () => stop("SIGTERM"));
     process.once("SIGINT", () => stop("SIGINT"));

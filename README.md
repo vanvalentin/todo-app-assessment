@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 1 (workspace foundation) is implemented. The pnpm workspace, placeholder web shell, API health/error foundation, validated environment, baseline Prisma migration, and local Compose topology are in place. Identity is the next delivery phase.
+> **Project status:** delivery phase 2 (backend identity) is implemented on `phase2-backend`. The workspace foundation and a production-minded Better Auth email/password slice are in place; the web auth client and board features remain in later slices.
 
 ## Product scope
 
@@ -164,6 +164,23 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
+## Identity delivery (phase 2 backend)
+
+Better Auth `1.2.12` is pinned with its Prisma adapter and mounted at `ALL /api/v1/auth/*`. The public `BETTER_AUTH_URL` is the origin only; Better Auth's `basePath` supplies `/api/v1/auth`. Its required User, Account, Session, and Verification models are in the identity migration, with a PostgreSQL `citext` email and required server-generated `avatarSeed`. All Better Auth IDs use the supported `advanced.database.generateId` hook with UUIDv7.
+
+Email/password signup and login use a minimum of 12 and maximum of 256 characters and explicit Argon2id parameters (19,456 KiB memory, two passes, one lane, 32-byte output). Passwords and auth/session data never enter browser storage. The signup hook marks `avatarSeed` as non-input and creates it from server entropy, so a client-supplied seed is ignored.
+
+PostgreSQL is authoritative. When Redis is configured, Better Auth secondary storage uses namespaced `ksat:better-auth:*` keys and Better Auth-provided TTLs; a bounded process-local fallback handles Redis outages while DB-backed sessions remain enabled. Cache failures are never treated as valid authentication. Built-in Better Auth rate limiting uses the same secondary storage and degrades to process memory when Redis is not configured. The API trusts forwarded proxy headers only when `TRUST_PROXY=true`, uses HttpOnly SameSite=Lax cookies, and enables Secure cookies in production. Better Auth's trusted-origin/CSRF checks remain enabled.
+
+Operational rollout:
+
+1. Copy `.env.example` or `apps/api/.env.example` and set a unique high-entropy `BETTER_AUTH_SECRET` (at least 32 characters) in production.
+2. Set the public `BETTER_AUTH_URL` and comma-separated `BETTER_AUTH_TRUSTED_ORIGINS`; do not use an internal Compose hostname.
+3. Run `pnpm db:migrate` (or let the Compose `migrate` job run) to apply the committed identity migration. Do not use `prisma db push`.
+4. Exercise Better Auth's pinned route reference through `/api/v1/auth/sign-up/email`, `/api/v1/auth/sign-in/email`, `/api/v1/auth/sign-out`, and `/api/v1/auth/get-session`.
+
+The standard `pnpm test` suite intentionally does not require PostgreSQL, Redis, or MinIO. It covers environment policy, Argon2id behavior, UUIDv7/avatar generation, Redis degradation, route mounting, health/error behavior, and shutdown. A service-backed integration run must be added/exercised with Compose or isolated test containers before production release to cover the full signup/session database flow and migration execution.
+
 ## API conventions
 
 - Base path: `/api/v1`.
@@ -178,7 +195,7 @@ Prisma migrations are the only way to change shared schemas. `prisma db push` is
 Planned resource surface:
 
 ```text
-ALL    /auth/*                         # Better Auth handler
+ALL    /api/v1/auth/*                   # Better Auth handler
        # email signup/sign-in, sign-out, session, and future OAuth callbacks
 
 GET    /boards
@@ -201,11 +218,11 @@ The Better Auth handler is mounted at `/api/v1/auth`. Its route contracts and ge
 
 ## Authentication and security baseline
 
-- Mount Better Auth inside the Express API; it is a library, not another Compose service. Pin its version and review release notes for schema, cookie, and account-linking changes.
+- Mount Better Auth `1.2.12` inside the Express API; it is a library, not another Compose service. Review release notes and regenerate/review its schema before upgrades.
 - Use the Better Auth Prisma adapter and commit its required tables through the same Prisma migration workflow as application tables.
 - Configure Better Auth email/password hashing and verification callbacks with Argon2id using OWASP-aligned parameters. Enforce at least 12 characters and allow password-manager-friendly long values.
 - Normalize and compare email addresses case-insensitively without changing display names.
-- Use Better Auth’s opaque, revocable session cookies. Cookie defaults are `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` outside local HTTP development; auth tokens never enter `localStorage`.
+- Use Better Auth’s opaque, revocable session cookies. Cookie defaults are `HttpOnly`, `SameSite=Lax`, `Path=/`, and `Secure` outside local HTTP development; auth tokens never enter `localStorage`. Phase 2 stores sessions in PostgreSQL and uses Redis only as secondary storage/cache.
 - Set `BETTER_AUTH_SECRET` from a high-entropy deployment secret and configure the public `BETTER_AUTH_URL`, trusted origins, and Express proxy handling explicitly.
 - Use Better Auth’s origin/CSRF protections for auth routes and retain application CSRF/origin protection for other state-changing endpoints. Rate-limit signup/login/invite endpoints through Redis.
 - Return the same login failure for unknown users and bad passwords.
@@ -268,7 +285,7 @@ Copy `.env.example` to `.env` when overriding the safe local defaults, then run:
 docker compose up --build
 ```
 
-The one-shot `migrate` service applies committed Prisma migrations before the API and worker start. The phase-1 migration is intentionally schema-empty; identity and application models are added only in their owning slices. Docker images install from the committed lockfile and application containers run as non-root users.
+The one-shot `migrate` service applies committed Prisma migrations before the API and worker start. The committed migrations include the phase-1 baseline and the phase-2 Better Auth identity schema. The identity migration enables `citext`, creates User/Account/Session/Verification with the pinned Better Auth 1.2.12 columns and indexes, and adds the required Ksat `avatarSeed` field. Application models are added only in their owning slices. Docker images install from the committed lockfile and application containers run as non-root users.
 
 Phase-1 local endpoints:
 
@@ -325,7 +342,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 ## Delivery plan
 
 1. **Workspace foundation (complete)** — pnpm workspace, TypeScript, lint/format, environment validation, Compose dependencies, health endpoints.
-2. **Identity** — Better Auth/Prisma schema, Argon2id callbacks, signup/sign-in/sign-out/session flows, Redis secondary storage, generated avatars, and auth UI; leave provider configuration ready for later social login.
+2. **Identity (backend complete; web client pending)** — Better Auth/Prisma schema, Argon2id callbacks, signup/sign-in/sign-out/session flows, Redis secondary storage, generated avatars, and validated provider configuration; the auth UI remains in the web delivery slice.
 3. **Boards and membership** — board list/detail, seeded board, member list, invitations, Mailpit flow, authorization.
 4. **Task core** — CRUD, status/priority, assignee/reporter, due dates, search/filter/sort/archive, optimistic concurrency.
 5. **Task detail** — Markdown editor/rendering, dependencies with cycle checks, MinIO attachments.

@@ -1,11 +1,11 @@
 import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
-import { Pool } from "pg";
+import { PrismaClient } from "@prisma/client";
 import { Redis } from "ioredis";
 import type { Environment } from "../config/env.js";
 import type { HealthChecks } from "../health.js";
 
 export interface Infrastructure {
-  readonly postgres: Pool;
+  readonly prisma: PrismaClient;
   readonly redis: Redis;
   readonly s3: S3Client;
   readonly healthChecks: HealthChecks;
@@ -13,10 +13,8 @@ export interface Infrastructure {
 }
 
 export function createInfrastructure(environment: Environment): Infrastructure {
-  const postgres = new Pool({
-    connectionString: environment.DATABASE_URL,
-    connectionTimeoutMillis: environment.HEALTH_CHECK_TIMEOUT_MS,
-    query_timeout: environment.HEALTH_CHECK_TIMEOUT_MS,
+  const prisma = new PrismaClient({
+    datasources: { db: { url: environment.DATABASE_URL } },
   });
   const redis = new Redis(environment.REDIS_URL, {
     lazyConnect: true,
@@ -37,7 +35,7 @@ export function createInfrastructure(environment: Environment): Infrastructure {
 
   const healthChecks: HealthChecks = {
     postgres: async () => {
-      await postgres.query("SELECT 1");
+      await prisma.$queryRaw`SELECT 1`;
     },
     redis: async () => {
       await redis.ping();
@@ -50,15 +48,15 @@ export function createInfrastructure(environment: Environment): Infrastructure {
   };
 
   return {
-    postgres,
+    prisma,
     redis,
     s3,
     healthChecks,
     async close(): Promise<void> {
       await Promise.allSettled([
-        postgres.end(),
+        prisma.$disconnect(),
         redis.status === "wait" ? Promise.resolve() : redis.quit(),
-        s3.destroy(),
+        Promise.resolve(s3.destroy()),
       ]);
     },
   };

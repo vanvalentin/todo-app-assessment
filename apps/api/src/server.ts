@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import type { Server } from "node:http";
 import { createApp } from "./app.js";
+import { createBetterAuth } from "./auth/config.js";
 import { loadEnvironment } from "./config/env.js";
 import { createInfrastructure } from "./infrastructure/dependencies.js";
 import { createLogger } from "./logging.js";
@@ -11,10 +12,23 @@ export async function startServer(): Promise<Server> {
   const environment = loadEnvironment();
   const logger = createLogger(environment.LOG_LEVEL);
   const infrastructure = createInfrastructure(environment);
+  let authHandler: ReturnType<typeof createBetterAuth>["handler"];
+  try {
+    authHandler = createBetterAuth({
+      prisma: infrastructure.prisma,
+      redis: infrastructure.redis,
+      environment,
+    }).handler;
+  } catch (error) {
+    await infrastructure.close();
+    throw error;
+  }
   const app = createApp({
     logger,
     healthChecks: infrastructure.healthChecks,
     healthCheckTimeoutMs: environment.HEALTH_CHECK_TIMEOUT_MS,
+    trustProxy: environment.TRUST_PROXY,
+    authHandler,
   });
 
   try {
