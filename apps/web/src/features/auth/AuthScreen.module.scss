@@ -1,0 +1,431 @@
+@use "../../styles/tokens" as tokens;
+
+.authPage {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  min-height: 100svh;
+  padding: clamp(1.5rem, 5vw, 3rem) 1rem 1.25rem;
+}
+
+.brandLockup {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  margin-block: 0 2.25rem;
+  text-transform: uppercase;
+}
+
+.brandName {
+  font-family: "Newsreader", Georgia, serif;
+  font-size: 1.75rem;
+  letter-spacing: -0.04em;
+  text-transform: none;
+}
+
+.brandDivider {
+  background: var(--color-ink);
+  height: 1.25rem;
+  opacity: 0.35;
+  width: 1px;
+}
+
+.brandDescriptor,
+.authFooter {
+  color: var(--color-muted);
+  font-family: "Space Mono", ui-monospace, monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.08em;
+}
+
+.authCard,
+.loadingCard {
+  background: var(--color-white);
+  border: 1px solid var(--color-line-strong);
+  border-radius: 0.75rem;
+  box-shadow: 0 0.5rem 2rem rgb(26 25 24 / 3%);
+  max-width: 36rem;
+  padding: clamp(1.5rem, 7vw, 3.0625rem);
+  width: 100%;
+}
+
+.modeSwitch {
+  background: var(--color-tint);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: 1fr 1fr;
+  margin-block-end: 2.25rem;
+  padding: 0.25rem;
+}
+
+.modeButton,
+.modeButtonActive {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  min-height: 2.625rem;
+  padding: 0.625rem 0.75rem;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.modeButton:hover {
+  background: rgb(255 255 255 / 70%);
+}
+
+.modeButtonActive {
+  background: var(--color-white);
+  box-shadow: 0 1px 0 rgb(26 25 24 / 8%);
+}
+
+.headingGroup {
+  margin-block-end: 2rem;
+}
+
+.eyebrow,
+.identityEyebrow {
+  color: var(--color-muted);
+  font-family: "Space Mono", ui-monospace, monospace;
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  margin: 0 0 0.875rem;
+  text-transform: uppercase;
+}
+
+.headingGroup h1,
+.identityPanel h2 {
+  font-family: "Newsreader", Georgia, serif;
+  font-size: clamp(2.25rem, 7vw, 2.25rem);
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  margin: 0 0 0.875rem;
+}
+
+.headingGroup > p:last-child,
+.identityDescription {
+  color: var(--color-muted);
+  font-size: 0.875rem;
+  line-height: 1.65;
+  margin: 0;
+}
+
+.form {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.field label,
+.labelRow label {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.field input {
+  background: var(--color-white);
+  border: 1px solid var(--color-line-strong);
+  border-radius: var(--radius-small);
+  color: var(--color-ink);
+  min-height: 3rem;
+  padding: 0.75rem 0.875rem;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+  width: 100%;
+}
+
+.field input:hover {
+  border-color: var(--color-muted);
+}
+
+.field input:focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 0.1875rem rgb(156 92 34 / 16%);
+  outline: none;
+}
+
+.field input[aria-invalid="true"] {
+  border-color: var(--color-error);
+}
+
+.labelRow {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.passwordToggle {
+  background: transparent;
+  border: 0;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.6875rem;
+  padding: 0.125rem;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.passwordToggle:hover {
+  color: var(--color-ink);
+}
+
+.fieldError {
+  color: var(--color-error);
+  font-size: 0.6875rem;
+}
+
+.errorSummary,
+.notice {
+  border-radius: var(--radius-small);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0.75rem;
+}
+
+.errorSummary {
+  background: var(--color-error-soft);
+  color: var(--color-error);
+}
+
+.notice {
+  background: var(--color-tint);
+  color: var(--color-muted);
+}
+
+.primaryButton,
+.secondaryButton {
+  border-radius: var(--radius-small);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
+  transition:
+    background-color 140ms ease,
+    opacity 140ms ease,
+    transform 140ms ease;
+  width: 100%;
+}
+
+.primaryButton {
+  background: var(--color-ink);
+  border: 1px solid var(--color-ink);
+  color: var(--color-white);
+  margin-block-start: 0.5rem;
+}
+
+.primaryButton:hover:not(:disabled),
+.secondaryButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.identityPanel {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+}
+
+.avatar {
+  align-items: center;
+  border: 1px solid rgb(26 25 24 / 16%);
+  border-radius: 50%;
+  display: flex;
+  font-family: "Newsreader", Georgia, serif;
+  font-size: 2rem;
+  height: 5rem;
+  justify-content: center;
+  margin-block: 0 1.5rem;
+  overflow: hidden;
+  position: relative;
+  width: 5rem;
+}
+
+.avatar span {
+  position: relative;
+  z-index: 1;
+}
+
+.avatar i {
+  border-radius: 42% 58% 52% 48%;
+  height: 3.5rem;
+  position: absolute;
+  right: -0.625rem;
+  top: -0.375rem;
+  transform: rotate(25deg);
+  width: 3.5rem;
+}
+
+.avatarShapeTwo {
+  border-radius: 50% !important;
+  bottom: -1rem;
+  height: 4rem !important;
+  left: -0.5rem;
+  top: auto !important;
+  transform: none !important;
+  width: 4rem !important;
+}
+
+.avatarShapeThree {
+  border-radius: 0.75rem !important;
+  bottom: -0.5rem;
+  height: 3rem !important;
+  left: -0.25rem;
+  right: auto !important;
+  top: auto !important;
+  transform: rotate(45deg) !important;
+  width: 3rem !important;
+}
+
+.avatarToneOne {
+  background: var(--avatar-one-background);
+  color: var(--avatar-one-ink);
+}
+
+.avatarToneOne i {
+  background: var(--avatar-one-shape);
+}
+
+.avatarToneTwo {
+  background: var(--avatar-two-background);
+  color: var(--avatar-two-ink);
+}
+
+.avatarToneTwo i {
+  background: var(--avatar-two-shape);
+}
+
+.avatarToneThree {
+  background: var(--avatar-three-background);
+  color: var(--avatar-three-ink);
+}
+
+.avatarToneThree i {
+  background: var(--avatar-three-shape);
+}
+
+.identityPanel h2 {
+  margin-block-end: 0.375rem;
+}
+
+.identityEmail {
+  color: var(--color-muted);
+  font-family: "Space Mono", ui-monospace, monospace;
+  font-size: 0.6875rem;
+  margin: 0 0 1.25rem;
+}
+
+.identityDescription {
+  margin-block-end: 1.5rem;
+  max-width: 24rem;
+}
+
+.identityPanel .errorSummary {
+  margin-block-end: 1rem;
+  text-align: start;
+  width: 100%;
+}
+
+.secondaryButton {
+  background: transparent;
+  border: 1px solid var(--color-line-strong);
+  color: var(--color-ink);
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: var(--color-tint);
+}
+
+.loadingCard {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  justify-content: center;
+  min-height: 12rem;
+  text-align: center;
+}
+
+.loadingCard p {
+  color: var(--color-muted);
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.loadingMark {
+  align-items: center;
+  background: var(--color-ink);
+  border-radius: 50%;
+  color: var(--color-white);
+  display: flex;
+  font-family: "Newsreader", Georgia, serif;
+  font-size: 1.5rem;
+  height: 2.75rem;
+  justify-content: center;
+  width: 2.75rem;
+}
+
+.authFooter {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  margin-block-start: auto;
+  max-width: 36rem;
+  padding-block-start: 2rem;
+  width: 100%;
+}
+
+@media (max-width: 36rem) {
+  .authPage {
+    padding-inline: 0.75rem;
+  }
+
+  .brandLockup {
+    margin-block-end: 1.5rem;
+  }
+
+  .authCard {
+    padding: 1.5rem;
+  }
+
+  .authFooter {
+    align-items: center;
+    flex-direction: column;
+    gap: 0.5rem;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modeButton,
+  .modeButtonActive,
+  .field input,
+  .primaryButton,
+  .secondaryButton {
+    transition: none;
+  }
+}
