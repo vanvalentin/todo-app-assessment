@@ -1,0 +1,30 @@
+{
+  "name": "ksat",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": "24.12.0",
+    "pnpm": "11.18.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "test": "pnpm --recursive --if-present test",
+    "build": "pnpm --recursive --if-present build",
+    "db:migrate": "pnpm --filter @ksat/api db:migrate",
+    "compose:config": "docker compose config --quiet",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm compose:config"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.22.0",
+    "@types/node": "24.0.0",
+    "eslint": "9.22.0",
+    "eslint-config-prettier": "10.1.1",
+    "prettier": "3.5.3",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.26.0"
+  }
+}

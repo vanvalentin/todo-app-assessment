@@ -1,10 +1,10 @@
 ---
 name: todo-app-workflow
-description: Implements and reviews vertical slices in this Kōsa TODO repository, including React/Vite UI, Sass Modules, Express/Better Auth APIs, Prisma/PostgreSQL data, Redis jobs/cache, Docker Compose, Figma fidelity, authorization, and tests. Use whenever planning, coding, debugging, reviewing, or documenting application work in this repository.
+description: Implements and reviews vertical slices in this Ksat repository, including React/Vite UI, Sass Modules, Express/Better Auth APIs, Prisma/PostgreSQL data, Redis jobs/cache, Docker Compose, Figma fidelity, authorization, and tests. Use whenever planning, coding, debugging, reviewing, or documenting application work in this repository.
 compatibility: Requires the repository README and AGENTS.md; UI tasks require access to the Figma MCP.
 ---
 
-# Kōsa TODO application workflow
+# Ksat application workflow
 
 Use this workflow for repository changes. `README.md` owns architecture and scope; `AGENTS.md` owns mandatory conventions. If this skill and those files conflict, follow `AGENTS.md` and the latest explicit user request.
 

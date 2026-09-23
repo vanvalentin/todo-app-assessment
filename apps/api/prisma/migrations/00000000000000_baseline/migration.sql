@@ -1,0 +1,1 @@
+-- Phase 1 baseline: the Prisma schema intentionally contains no models yet.

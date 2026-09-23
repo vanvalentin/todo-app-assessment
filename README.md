@@ -1,8 +1,8 @@
-# Kōsa TODO
+# Ksat
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** architecture and delivery conventions are defined; application scaffolding has not started yet. Commands and directory layouts marked **target** describe the next implementation phase.
+> **Project status:** delivery phase 1 (workspace foundation) is implemented. The pnpm workspace, placeholder web shell, API health/error foundation, validated environment, baseline Prisma migration, and local Compose topology are in place. Identity is the next delivery phase.
 
 ## Product scope
 
@@ -100,7 +100,7 @@ flowchart LR
 
 In development, Vite proxies `/api` to Express. In the Docker deployment, Nginx serves the compiled SPA and proxies `/api`, so browser cookies stay same-origin and CORS is not required for the default setup.
 
-## Target repository layout
+## Repository layout
 
 ```text
 .
@@ -247,7 +247,7 @@ PostgreSQL is authoritative. Redis is used for:
 
 Task-board data is not cached initially because its high mutation rate makes invalidation more complex than the likely gain. Membership and board mutations explicitly invalidate affected user/board cache keys. Cache failures degrade reads to PostgreSQL where safe; they never bypass authorization.
 
-## Local deployment (**target**)
+## Local deployment
 
 The Compose project will contain:
 
@@ -262,18 +262,23 @@ The Compose project will contain:
 | `minio` | S3-compatible attachment storage |
 | `mailpit` | Local SMTP inbox and browser UI |
 
-Planned first-run command:
+Copy `.env.example` to `.env` when overriding the safe local defaults, then run:
 
 ```bash
 docker compose up --build
 ```
 
-Expected local endpoints after scaffolding:
+The one-shot `migrate` service applies committed Prisma migrations before the API and worker start. The phase-1 migration is intentionally schema-empty; identity and application models are added only in their owning slices. Docker images install from the committed lockfile and application containers run as non-root users.
 
-- Application: `http://localhost:8080`
-- API docs: `http://localhost:8080/api/docs`
+Phase-1 local endpoints:
+
+- Placeholder application: `http://localhost:8080`
+- API liveness: `http://localhost:3000/health/live`
+- API readiness: `http://localhost:3000/health/ready`
 - Mailpit: `http://localhost:8025`
 - MinIO console: `http://localhost:9001`
+
+Swagger UI at `http://localhost:8080/api/docs` is added with the application OpenAPI slice; it is not exposed by the foundation placeholder.
 
 Compose health checks and `depends_on: condition: service_healthy` will gate startup. Named volumes persist PostgreSQL, Redis, and MinIO data. The migration job must succeed before API/worker startup. Images run as non-root users and receive configuration through environment variables. Better Auth runs in `api`; local OAuth callbacks use the public URL (for example `http://localhost:8080/api/v1/auth/callback/...`), never an internal Compose hostname. Social providers remain disabled when their client credentials are absent.
 
@@ -287,9 +292,20 @@ Compose health checks and `depends_on: condition: service_healthy` will gate sta
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
 
-## Quality gates and CI plan
+## Workspace commands and quality gates
 
-Every change should pass the workspace equivalents of:
+Use the Corepack-pinned pnpm version from `package.json`. The API development command loads `apps/api/.env` when present and otherwise uses safe localhost development defaults; production mode requires explicit dependency settings.
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+pnpm dev                 # local API and Vite development servers
+# Copy apps/api/.env.example to apps/api/.env or export DATABASE_URL first:
+pnpm db:migrate          # apply committed Prisma migrations
+pnpm compose:config      # validate Compose configuration
+```
+
+Every change should pass:
 
 ```bash
 pnpm format:check
@@ -297,7 +313,10 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm compose:config
 ```
+
+`pnpm check` runs that full sequence.
 
 A later GitHub Actions workflow will run those checks, start service containers for integration tests, run migrations, and build (but not publish) Docker images. Playwright can be a separate job after the core checks. Dependency caching must key from `pnpm-lock.yaml`.
 
@@ -305,7 +324,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 
 ## Delivery plan
 
-1. **Workspace foundation** — pnpm workspace, TypeScript, lint/format, environment validation, Compose dependencies, health endpoints.
+1. **Workspace foundation (complete)** — pnpm workspace, TypeScript, lint/format, environment validation, Compose dependencies, health endpoints.
 2. **Identity** — Better Auth/Prisma schema, Argon2id callbacks, signup/sign-in/sign-out/session flows, Redis secondary storage, generated avatars, and auth UI; leave provider configuration ready for later social login.
 3. **Boards and membership** — board list/detail, seeded board, member list, invitations, Mailpit flow, authorization.
 4. **Task core** — CRUD, status/priority, assignee/reporter, due dates, search/filter/sort/archive, optimistic concurrency.
