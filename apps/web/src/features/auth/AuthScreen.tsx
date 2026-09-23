@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type KeyboardEvent, useRef, useState } from "react";
 import { authClient, type AuthResponse, type AuthSession } from "./authClient";
 import { AuthForm, type AuthMode } from "./AuthForm";
 import { IdentityPanel } from "./IdentityPanel";
@@ -21,6 +21,31 @@ export function AuthScreen() {
   const [mode, setMode] = useState<AuthMode>("sign-up");
   const [localSession, setLocalSession] = useState<AuthSession | null>(null);
   const [hasSignedOut, setHasSignedOut] = useState(false);
+  const radioRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const selectMode = (value: AuthMode) => {
+    setMode(value);
+    const index = modes.findIndex((item) => item.value === value);
+    radioRefs.current[index]?.focus();
+  };
+
+  const handleModeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = modes.findIndex((item) => item.value === mode);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (currentIndex + 1) % modes.length;
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + modes.length) % modes.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = modes.length - 1;
+    }
+    if (nextIndex !== null && nextIndex !== currentIndex) {
+      event.preventDefault();
+      selectMode(modes[nextIndex].value);
+    }
+  };
 
   const session = hasSignedOut ? null : (localSession ?? sessionState.data ?? null);
 
@@ -71,15 +96,24 @@ export function AuthScreen() {
               : "Sign in to return to your todo list and shared work."}
           </p>
         </div>
-        <div className={styles.modeSwitch} role="tablist" aria-label="Account access">
-          {modes.map((item) => (
+        <div
+          className={styles.modeSwitch}
+          role="radiogroup"
+          aria-label="Account access"
+          onKeyDown={handleModeKeyDown}
+        >
+          {modes.map((item, index) => (
             <button
               className={item.value === mode ? styles.modeButtonActive : styles.modeButton}
               key={item.value}
               type="button"
-              role="tab"
-              aria-selected={item.value === mode}
-              onClick={() => setMode(item.value)}
+              role="radio"
+              aria-checked={item.value === mode}
+              tabIndex={item.value === mode ? 0 : -1}
+              ref={(element) => {
+                radioRefs.current[index] = element;
+              }}
+              onClick={() => selectMode(item.value)}
             >
               {item.label}
             </button>

@@ -17,8 +17,8 @@ describe("App", () => {
 
     expect(screen.getByRole("main")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Welcome to the Collective" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Create account" })).toHaveAttribute(
-      "aria-selected",
+    expect(screen.getByRole("radio", { name: "Create account" })).toHaveAttribute(
+      "aria-checked",
       "true",
     );
   });

@@ -15,6 +15,7 @@ coverage/
 
 # Runtime and local data
 *.log
+.pi/fabric/
 *.pid
 .tmp/
 .tmp-*/

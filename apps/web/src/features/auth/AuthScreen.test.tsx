@@ -58,10 +58,28 @@ describe("AuthScreen", () => {
     expect(screen.getByRole("heading", { name: "Welcome to the Collective" })).toBeInTheDocument();
     expect(screen.getByLabelText(/display name/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Log in" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Log in" }));
 
     expect(screen.queryByLabelText(/display name/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
+  });
+
+  it("moves between modes with arrow keys and exposes a radiogroup", () => {
+    render(<AuthScreen />);
+    const group = screen.getByRole("radiogroup", { name: "Account access" });
+
+    expect(screen.getByRole("radio", { name: "Create account" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("radio", { name: "Create account" })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("radio", { name: "Log in" })).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.keyDown(group, { key: "ArrowRight" });
+
+    expect(screen.getByRole("radio", { name: "Log in" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("radio", { name: "Log in" })).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("radio", { name: "Create account" })).toHaveAttribute("tabindex", "-1");
   });
 
   it("shows validation messages for incomplete signup details", async () => {
@@ -98,7 +116,7 @@ describe("AuthScreen", () => {
       session: null,
     });
     render(<AuthScreen />);
-    fireEvent.click(screen.getByRole("tab", { name: "Log in" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Log in" }));
     fillSignInForm();
 
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));
@@ -109,7 +127,7 @@ describe("AuthScreen", () => {
   it("shows a safe retry message when the auth service is unreachable", async () => {
     mocks.signIn.mockRejectedValue(new Error("internal network details"));
     render(<AuthScreen />);
-    fireEvent.click(screen.getByRole("tab", { name: "Log in" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Log in" }));
     fillSignInForm();
 
     fireEvent.click(screen.getByRole("button", { name: "Log in" }));

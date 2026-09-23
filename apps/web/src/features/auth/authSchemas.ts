@@ -11,7 +11,7 @@ const emailSchema = z
 const passwordSchema = z
   .string()
   .min(12, "Use at least 12 characters.")
-  .max(128, "Passwords must be 128 characters or fewer.");
+  .max(256, "Passwords must be 256 characters or fewer.");
 
 export const signUpSchema = z.object({
   name: z
