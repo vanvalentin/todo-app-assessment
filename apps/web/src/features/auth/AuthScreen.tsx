@@ -40,8 +40,8 @@ export function AuthScreen() {
   if (session !== null) {
     return (
       <main className={styles.authPage}>
-        <AuthBrand />
         <div className={styles.authCard}>
+          <AuthBrand />
           <IdentityPanel
             user={session.user}
             onSignOut={async () => {
@@ -61,8 +61,16 @@ export function AuthScreen() {
 
   return (
     <main className={styles.authPage}>
-      <AuthBrand />
       <div className={styles.authCard}>
+        <AuthBrand />
+        <div className={styles.headingGroup}>
+          <h1>Welcome to the Collective</h1>
+          <p>
+            {mode === "sign-up"
+              ? "Create your profile and begin shaping a more thoughtful todo list."
+              : "Sign in to return to your todo list and shared work."}
+          </p>
+        </div>
         <div className={styles.modeSwitch} role="tablist" aria-label="Account access">
           {modes.map((item) => (
             <button
@@ -76,15 +84,6 @@ export function AuthScreen() {
               {item.label}
             </button>
           ))}
-        </div>
-        <div className={styles.headingGroup}>
-          <p className={styles.eyebrow}>A considered beginning</p>
-          <h1>Welcome to the Collective</h1>
-          <p>
-            {mode === "sign-up"
-              ? "Create an account to keep your todo list close."
-              : "Log in to return to your todo list."}
-          </p>
         </div>
         <AuthForm
           key={mode}
@@ -111,17 +110,14 @@ function AuthBrand() {
   return (
     <header className={styles.brandLockup}>
       <span className={styles.brandName}>Ksat</span>
-      <span className={styles.brandDivider} aria-hidden="true" />
+      <span className={styles.brandDivider} aria-hidden="true">
+        /
+      </span>
       <span className={styles.brandDescriptor}>Your todo list</span>
     </header>
   );
 }
 
 function AuthFooter() {
-  return (
-    <footer className={styles.authFooter}>
-      <span>KSAT / IDENTITY</span>
-      <span>Take it one task at a time.</span>
-    </footer>
-  );
+  return <footer className={styles.authFooter}>© 2027 Ksat</footer>;
 }

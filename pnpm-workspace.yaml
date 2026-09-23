@@ -1,6 +1,9 @@
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  vite: "6.4.3"
+  fast-xml-parser: "4.5.5"
 allowBuilds:
   "@parcel/watcher": true
   "@prisma/client": true

@@ -1,3 +1,5 @@
+import { createAvatar } from "@dicebear/core";
+import * as shapes from "@dicebear/shapes";
 import { useState } from "react";
 import type { AuthResponse, AuthUser } from "./authClient";
 import styles from "./AuthScreen.module.scss";
@@ -7,25 +9,13 @@ interface IdentityPanelProps {
   onSignOut: () => Promise<AuthResponse>;
 }
 
-const avatarTones = [styles.avatarToneOne, styles.avatarToneTwo, styles.avatarToneThree];
-const avatarShapes = [styles.avatarShapeOne, styles.avatarShapeTwo, styles.avatarShapeThree];
-
-function avatarVariant(seed: string | null): number {
-  const value = seed ?? "ksat";
-  let hash = 0;
-
-  for (const character of value) {
-    hash = (hash * 31 + character.charCodeAt(0)) % 997;
-  }
-
-  return hash % avatarTones.length;
-}
-
 export function IdentityPanel({ user, onSignOut }: IdentityPanelProps) {
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const variant = avatarVariant(user.avatarSeed);
-  const initial = user.name.trim().charAt(0).toUpperCase() || "K";
+  const avatar = createAvatar(shapes, {
+    seed: user.avatarSeed ?? user.id,
+    size: 80,
+  }).toDataUri();
 
   const handleSignOut = async () => {
     setError(null);
@@ -45,10 +35,7 @@ export function IdentityPanel({ user, onSignOut }: IdentityPanelProps) {
 
   return (
     <section className={styles.identityPanel} aria-labelledby="identity-heading">
-      <div className={`${styles.avatar} ${avatarTones[variant]}`} aria-hidden="true">
-        <span>{initial}</span>
-        <i className={avatarShapes[variant]} />
-      </div>
+      <img className={styles.avatar} src={avatar} alt={`${user.name}'s generated avatar`} />
       <p className={styles.identityEyebrow}>Identity ready</p>
       <h2 id="identity-heading">Welcome, {user.name}.</h2>
       <p className={styles.identityEmail}>{user.email}</p>

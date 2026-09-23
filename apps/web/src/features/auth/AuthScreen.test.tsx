@@ -29,7 +29,7 @@ const signedInSession = {
 };
 
 function fillSignUpForm() {
-  fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "Ada Lovelace" } });
+  fireEvent.change(screen.getByLabelText(/display name/i), { target: { value: "Ada Lovelace" } });
   fireEvent.change(screen.getByLabelText("Email"), { target: { value: " ADA@EXAMPLE.TEST " } });
   fireEvent.change(screen.getByLabelText("Password"), {
     target: { value: "a secure password" },
@@ -56,11 +56,11 @@ describe("AuthScreen", () => {
     render(<AuthScreen />);
 
     expect(screen.getByRole("heading", { name: "Welcome to the Collective" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Display name")).toBeInTheDocument();
+    expect(screen.getByLabelText(/display name/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Log in" }));
 
-    expect(screen.queryByLabelText("Display name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/display name/i)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
   });
 
@@ -106,6 +106,18 @@ describe("AuthScreen", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't sign you in.");
   });
 
+  it("shows a safe retry message when the auth service is unreachable", async () => {
+    mocks.signIn.mockRejectedValue(new Error("internal network details"));
+    render(<AuthScreen />);
+    fireEvent.click(screen.getByRole("tab", { name: "Log in" }));
+    fillSignInForm();
+
+    fireEvent.click(screen.getByRole("button", { name: "Log in" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("We couldn't reach Ksat");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("internal network details");
+  });
+
   it("shows the authenticated identity after a successful signup", async () => {
     render(<AuthScreen />);
     fillSignUpForm();
@@ -115,8 +127,15 @@ describe("AuthScreen", () => {
     expect(
       await screen.findByRole("heading", { name: "Welcome, Ada Lovelace." }),
     ).toBeInTheDocument();
+    expect(mocks.signUp).toHaveBeenCalledWith({
+      name: "Ada Lovelace",
+      email: "ada@example.test",
+      password: "a secure password",
+    });
     expect(screen.getByText("ada@example.test")).toBeInTheDocument();
-    expect(screen.getByText("A")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Ada Lovelace's generated avatar" }),
+    ).toBeInTheDocument();
   });
 
   it("toggles password visibility with a pressed state", () => {

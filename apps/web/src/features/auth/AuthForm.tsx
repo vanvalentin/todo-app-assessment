@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useId, useState } from "react";
 import { useForm } from "react-hook-form";
+import submitArrow from "../../assets/auth/submit-arrow.svg";
 import type { AuthResponse } from "./authClient";
 import { signInSchema, signUpSchema } from "./authSchemas";
 import styles from "./AuthScreen.module.scss";
@@ -59,7 +60,7 @@ export function AuthForm({ mode, sessionError = false, onSubmit }: AuthFormProps
         setSubmitError(messageForMode(mode, response.error));
       }
     } catch {
-      setSubmitError(messageForMode(mode, null));
+      setSubmitError("We couldn't reach Ksat. Check your connection and try again.");
     }
   };
 
@@ -89,31 +90,43 @@ export function AuthForm({ mode, sessionError = false, onSubmit }: AuthFormProps
 
       {isSignUp ? (
         <div className={styles.field}>
-          <label htmlFor={nameId}>Display name</label>
+          <div className={styles.labelRow}>
+            <label htmlFor={nameId}>Display Name / Studio Handle</label>
+            <span className={styles.fieldMeta}>Required</span>
+          </div>
           <input
             {...form.register("name")}
             id={nameId}
             autoComplete="name"
+            placeholder="e.g. Lina Park / Studio Ksat"
             disabled={isSubmitting}
             aria-invalid={nameError === undefined ? "false" : "true"}
-            aria-describedby={nameError === undefined ? undefined : `${nameId}-error`}
+            aria-describedby={nameError === undefined ? `${nameId}-hint` : `${nameId}-error`}
           />
           {nameError !== undefined ? (
             <span className={styles.fieldError} id={`${nameId}-error`} role="alert">
               {nameError}
             </span>
-          ) : null}
+          ) : (
+            <span className={styles.fieldHint} id={`${nameId}-hint`}>
+              Shown across shared boards and project logs.
+            </span>
+          )}
         </div>
       ) : null}
 
       <div className={styles.field}>
-        <label htmlFor={emailId}>Email</label>
+        <div className={styles.labelRow}>
+          <label htmlFor={emailId}>Email</label>
+          <span className={styles.fieldMeta}>Account identity</span>
+        </div>
         <input
           {...form.register("email")}
           id={emailId}
           type="email"
           autoComplete="email"
           inputMode="email"
+          placeholder="resident@example.com"
           disabled={isSubmitting}
           aria-invalid={emailError === undefined ? "false" : "true"}
           aria-describedby={emailError === undefined ? undefined : `${emailId}-error`}
@@ -143,6 +156,7 @@ export function AuthForm({ mode, sessionError = false, onSubmit }: AuthFormProps
           id={passwordId}
           type={showPassword ? "text" : "password"}
           autoComplete={isSignUp ? "new-password" : "current-password"}
+          placeholder="••••••••••••"
           disabled={isSubmitting}
           aria-invalid={passwordError === undefined ? "false" : "true"}
           aria-describedby={passwordError === undefined ? undefined : `${passwordId}-error`}
@@ -155,7 +169,8 @@ export function AuthForm({ mode, sessionError = false, onSubmit }: AuthFormProps
       </div>
 
       <button className={styles.primaryButton} type="submit" disabled={isSubmitting}>
-        {isSubmitting ? "Working…" : isSignUp ? "Create account" : "Log in"}
+        <span>{isSubmitting ? "Working…" : isSignUp ? "Create account" : "Log in"}</span>
+        <img src={submitArrow} alt="" />
       </button>
     </form>
   );

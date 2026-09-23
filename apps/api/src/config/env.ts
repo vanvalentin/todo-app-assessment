@@ -16,6 +16,11 @@ const urlWithProtocol = (protocols: readonly string[]) =>
       `must use one of: ${protocols.join(", ")}`,
     );
 
+const optionalNonEmptyString = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
+
 const developmentAuthSecret = "dev-only-ksat-better-auth-secret-change-me-1234";
 const localTrustedOrigins = ["http://localhost:8080", "http://localhost:5173"];
 const originsFromEnv = z
@@ -52,12 +57,16 @@ const environmentSchema = z.object({
   BETTER_AUTH_URL: urlWithProtocol(["http", "https"]).default("http://localhost:3000"),
   BETTER_AUTH_SECRET: z.string().min(32).default(developmentAuthSecret),
   BETTER_AUTH_TRUSTED_ORIGINS: originsFromEnv,
+  BETTER_AUTH_SECURE_COOKIES: booleanFromEnv.optional(),
   // Validated now so a later provider slice cannot accept unvalidated secrets.
-  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
-  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+  GOOGLE_CLIENT_ID: optionalNonEmptyString,
+  GOOGLE_CLIENT_SECRET: optionalNonEmptyString,
 });
 
-export type Environment = z.infer<typeof environmentSchema>;
+type ParsedEnvironment = z.infer<typeof environmentSchema>;
+export type Environment = Omit<ParsedEnvironment, "BETTER_AUTH_SECURE_COOKIES"> & {
+  BETTER_AUTH_SECURE_COOKIES: boolean;
+};
 
 export class EnvironmentValidationError extends Error {
   public readonly issues: readonly string[];
@@ -78,6 +87,7 @@ const productionRequiredKeys = [
   "BETTER_AUTH_URL",
   "BETTER_AUTH_SECRET",
   "BETTER_AUTH_TRUSTED_ORIGINS",
+  "BETTER_AUTH_SECURE_COOKIES",
 ] as const;
 
 /** Parse a supplied record so startup and tests do not depend on process-global mutation. */
@@ -101,7 +111,11 @@ export function parseEnvironment(input: Record<string, string | undefined>): Env
     );
     throw new EnvironmentValidationError(issues);
   }
-  return result.data;
+  return {
+    ...result.data,
+    BETTER_AUTH_SECURE_COOKIES:
+      result.data.BETTER_AUTH_SECURE_COOKIES ?? result.data.NODE_ENV === "production",
+  };
 }
 
 export function loadEnvironment(): Environment {

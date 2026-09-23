@@ -11,6 +11,11 @@ describe("environment validation", () => {
     expect(environment.S3_BUCKET).toBe("ksat");
     expect(environment.S3_FORCE_PATH_STYLE).toBe(true);
     expect(environment.BETTER_AUTH_SECRET).toContain("dev-only");
+    expect(environment.BETTER_AUTH_SECURE_COOKIES).toBe(false);
+    expect(environment.GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(
+      parseEnvironment({ GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" }).GOOGLE_CLIENT_ID,
+    ).toBeUndefined();
     expect(environment.BETTER_AUTH_TRUSTED_ORIGINS).toEqual([
       "http://localhost:8080",
       "http://localhost:5173",
@@ -46,6 +51,7 @@ describe("environment validation", () => {
         BETTER_AUTH_URL: "https://app.example.com",
         BETTER_AUTH_SECRET: "dev-only-ksat-better-auth-secret-change-me-1234",
         BETTER_AUTH_TRUSTED_ORIGINS: "https://app.example.com",
+        BETTER_AUTH_SECURE_COOKIES: "true",
       }),
     ).toThrow(/BETTER_AUTH_SECRET/);
   });

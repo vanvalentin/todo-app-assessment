@@ -39,7 +39,7 @@ export interface AuthClientBoundary {
   signOut: () => Promise<AuthResponse>;
 }
 
-const officialAuthClient = createAuthClient({ baseURL: "/api/v1/auth" });
+const officialAuthClient = createAuthClient({ basePath: "/api/v1/auth" });
 
 type UnknownRecord = Record<string, unknown>;
 

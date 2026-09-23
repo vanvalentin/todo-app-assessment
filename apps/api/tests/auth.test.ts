@@ -17,6 +17,14 @@ class FailingRedis implements RedisStorageClient {
     throw new Error("redis unavailable");
   }
 
+  async getAndDelete(): Promise<string | null> {
+    throw new Error("redis unavailable");
+  }
+
+  async increment(): Promise<number> {
+    throw new Error("redis unavailable");
+  }
+
   async set(): Promise<unknown> {
     throw new Error("redis unavailable");
   }
@@ -71,6 +79,10 @@ describe("identity security primitives", () => {
       ),
     ).resolves.toBeUndefined();
     await expect(storage.get("rate-limit")).resolves.toContain('"count":1');
+    await expect(storage.increment("counter", 30)).resolves.toBe(1);
+    await expect(storage.increment("counter", 30)).resolves.toBe(2);
+    await expect(storage.getAndDelete("counter")).resolves.toBe("2");
+    await expect(storage.get("counter")).resolves.toBeNull();
     await expect(storage.delete("rate-limit")).resolves.toBeUndefined();
     await expect(storage.get("rate-limit")).resolves.toBeNull();
   });
@@ -126,33 +138,22 @@ describe("identity security primitives", () => {
     expect(wrongPassword.body).toEqual(unknownUser.body);
   }, 15_000);
 
-  it("generates and overrides a client avatar seed through the Better Auth hook", async () => {
+  it("generates avatar seeds through a non-client Better Auth field default", async () => {
     const prisma = new PrismaClient();
     try {
       const { auth } = createBetterAuth({
         prisma,
         environment: parseEnvironment({ NODE_ENV: "test" }),
       });
-      expect(auth.options.user?.additionalFields?.avatarSeed).toMatchObject({
+      const avatarField = auth.options.user?.additionalFields?.avatarSeed;
+      expect(avatarField).toMatchObject({
         required: true,
         input: false,
       });
-      const before = auth.options.databaseHooks?.user?.create?.before;
-      if (!before) throw new Error("avatar hook was not configured");
-      const baseUser = {
-        id: generateUuid(),
-        name: "Test User",
-        email: "test@example.com",
-        emailVerified: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-      const result = await before(Object.assign(baseUser, { avatarSeed: "client-value" }));
-      if (!result || typeof result !== "object" || !("data" in result)) {
-        throw new Error("avatar hook did not return data");
-      }
-      expect(result.data.avatarSeed).toMatch(/^[0-9a-f]{32}$/);
-      expect(result.data.avatarSeed).not.toBe("client-value");
+      expect(avatarField?.defaultValue).toBeTypeOf("function");
+      const generated =
+        typeof avatarField?.defaultValue === "function" ? avatarField.defaultValue() : null;
+      expect(generated).toMatch(/^[0-9a-f]{32}$/);
     } finally {
       await prisma.$disconnect();
     }

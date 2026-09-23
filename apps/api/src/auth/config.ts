@@ -19,6 +19,19 @@ export function createBetterAuth({ prisma, redis, environment }: BetterAuthDepen
   const redisStorageClient: RedisStorageClient | undefined = redis
     ? {
         get: (key) => redis.get(key),
+        getAndDelete: (key) => redis.getdel(key),
+        increment: async (key, ttl) => {
+          const result = await redis.eval(
+            "local value = redis.call('INCR', KEYS[1]); if value == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end; return value",
+            1,
+            key,
+            ttl,
+          );
+          if (typeof result !== "number") {
+            throw new Error("Redis returned an invalid rate-limit counter");
+          }
+          return result;
+        },
         set: (key, value, ttl) =>
           ttl === undefined ? redis.set(key, value) : redis.set(key, value, "EX", ttl),
         del: (key) => redis.del(key),
@@ -51,22 +64,17 @@ export function createBetterAuth({ prisma, redis, environment }: BetterAuthDepen
           required: true,
           input: false,
           returned: true,
-        },
-      },
-    },
-    databaseHooks: {
-      user: {
-        create: {
-          before: async (user) => {
-            void user;
-            return { data: { avatarSeed: generateAvatarSeed() } };
-          },
+          defaultValue: generateAvatarSeed,
         },
       },
     },
     session: {
       storeSessionInDatabase: true,
       expiresIn: 60 * 60 * 24 * 7,
+    },
+    verification: {
+      storeInDatabase: true,
+      storeIdentifier: "hashed",
     },
     rateLimit: {
       enabled: true,
@@ -79,7 +87,7 @@ export function createBetterAuth({ prisma, redis, environment }: BetterAuthDepen
       },
     },
     advanced: {
-      useSecureCookies: environment.NODE_ENV === "production",
+      useSecureCookies: environment.BETTER_AUTH_SECURE_COOKIES,
       disableCSRFCheck: false,
       database: {
         generateId: () => generateUuid(),
@@ -87,7 +95,7 @@ export function createBetterAuth({ prisma, redis, environment }: BetterAuthDepen
       defaultCookieAttributes: {
         httpOnly: true,
         sameSite: "lax",
-        secure: environment.NODE_ENV === "production",
+        secure: environment.BETTER_AUTH_SECURE_COOKIES,
         path: "/",
       },
     },

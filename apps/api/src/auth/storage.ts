@@ -1,5 +1,7 @@
 export interface RedisStorageClient {
   get(key: string): Promise<string | null>;
+  getAndDelete(key: string): Promise<string | null>;
+  increment(key: string, ttl: number): Promise<number>;
   set(key: string, value: string, ttl?: number): Promise<unknown>;
   del(key: string): Promise<unknown>;
 }
@@ -11,6 +13,8 @@ interface MemoryValue {
 
 export interface SecondaryStorage {
   get(key: string): Promise<string | null>;
+  getAndDelete(key: string): Promise<string | null>;
+  increment(key: string, ttl: number): Promise<number>;
   set(key: string, value: string, ttl?: number): Promise<void>;
   delete(key: string): Promise<void>;
 }
@@ -35,6 +39,19 @@ export function createResilientSecondaryStorage(redis: RedisStorageClient): Seco
     }
     return entry.value;
   };
+  const getAndDeleteMemory = (key: string): string | null => {
+    const value = getMemory(key);
+    memory.delete(key);
+    return value;
+  };
+  const incrementMemory = (key: string, ttl: number): number => {
+    const existing = getMemory(key);
+    const next = existing === null ? 1 : Number.parseInt(existing, 10) + 1;
+    const expiresAt =
+      existing === null ? Date.now() + ttl * 1_000 : (memory.get(key)?.expiresAt ?? Date.now());
+    memory.set(key, { value: String(next), expiresAt });
+    return next;
+  };
 
   return {
     async get(key): Promise<string | null> {
@@ -44,6 +61,24 @@ export function createResilientSecondaryStorage(redis: RedisStorageClient): Seco
         return value ?? getMemory(redisKey);
       } catch {
         return getMemory(redisKey);
+      }
+    },
+    async getAndDelete(key): Promise<string | null> {
+      const redisKey = namespaced(key);
+      try {
+        const value = await redis.getAndDelete(redisKey);
+        memory.delete(redisKey);
+        return value;
+      } catch {
+        return getAndDeleteMemory(redisKey);
+      }
+    },
+    async increment(key, ttl): Promise<number> {
+      const redisKey = namespaced(key);
+      try {
+        return await redis.increment(redisKey, ttl);
+      } catch {
+        return incrementMemory(redisKey, ttl);
       }
     },
     async set(key, value, ttl): Promise<void> {
