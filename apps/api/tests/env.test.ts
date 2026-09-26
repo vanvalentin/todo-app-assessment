@@ -12,6 +12,8 @@ describe("environment validation", () => {
     expect(environment.S3_FORCE_PATH_STYLE).toBe(true);
     expect(environment.BETTER_AUTH_SECRET).toContain("dev-only");
     expect(environment.BETTER_AUTH_SECURE_COOKIES).toBe(false);
+    expect(environment.SEED_DEMO_DATA).toBe(false);
+    expect(environment.ALLOW_PRODUCTION_DEMO_SEED).toBe(false);
     expect(environment.GOOGLE_CLIENT_ID).toBeUndefined();
     expect(
       parseEnvironment({ GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" }).GOOGLE_CLIENT_ID,

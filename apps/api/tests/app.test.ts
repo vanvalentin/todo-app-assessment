@@ -96,6 +96,26 @@ describe("API foundation", () => {
     expect(response.body).not.toHaveProperty("requestId");
   });
 
+  it("disables Express signature headers", async () => {
+    const response = await request(appWith()).get("/health/live");
+
+    expect(response.headers["x-powered-by"]).toBeUndefined();
+  });
+
+  it("trusts only one configured proxy hop", async () => {
+    const app = createApp({
+      trustProxy: true,
+      configureRoutes: (expressApp) =>
+        expressApp.get("/client-ip", (request, response) => {
+          response.json({ ip: request.ip });
+        }),
+    });
+
+    const response = await request(app).get("/client-ip").set("X-Forwarded-For", "198.51.100.8");
+
+    expect(response.body.ip).toBe("198.51.100.8");
+  });
+
   it("does not expose unexpected errors", async () => {
     const app = createApp({
       logger: pino({ level: "silent" }),

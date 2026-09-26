@@ -8,16 +8,21 @@ datasource db {
 }
 
 model User {
-  id            String    @id
-  name          String
-  email         String    @unique @db.Citext
-  emailVerified Boolean   @default(false)
-  image         String?
-  createdAt     DateTime
-  updatedAt     DateTime
-  avatarSeed    String
-  sessions      Session[]
-  accounts      Account[]
+  id                  String            @id
+  name                String
+  email               String            @unique @db.Citext
+  emailVerified       Boolean           @default(false)
+  image               String?
+  createdAt           DateTime
+  updatedAt           DateTime
+  avatarSeed          String
+  sessions            Session[]
+  accounts            Account[]
+  ownedBoards         Board[]           @relation("BoardOwner")
+  boardMemberships    BoardMembership[]
+  sentInvitations     BoardInvitation[] @relation("InvitationInviter")
+  acceptedInvitations BoardInvitation[] @relation("InvitationAcceptor")
+  createdTasks        Task[]            @relation("TaskCreator")
 
   @@map("user")
 }
@@ -53,8 +58,8 @@ model Account {
   createdAt             DateTime
   updatedAt             DateTime
 
-  @@index([userId])
   @@unique([providerId, accountId])
+  @@index([userId])
   @@map("account")
 }
 
@@ -68,4 +73,104 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+enum BoardRole {
+  ADMIN
+  MANAGER
+  CONTRIBUTOR
+}
+
+model Board {
+  // PostgreSQL-only CHECK constraint board_name_not_empty is maintained in the
+  // committed migration because Prisma's schema DSL cannot express CHECK constraints.
+  id               String            @id
+  name             String
+  description      String?
+  ownerId          String
+  owner            User              @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  version          Int               @default(1)
+  nextTaskSequence Int               @default(1)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  memberships      BoardMembership[]
+  invitations      BoardInvitation[]
+  tasks            Task[]
+
+  @@index([ownerId])
+  @@map("board")
+}
+
+model BoardMembership {
+  id       String    @id
+  boardId  String
+  board    Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     BoardRole
+  joinedAt DateTime  @default(now())
+
+  @@unique([boardId, userId])
+  @@index([userId])
+  @@map("board_membership")
+}
+
+// PostgreSQL-only partial unique index board_invitation_pending_board_email_key
+// is maintained in the committed migration because Prisma cannot express partial indexes.
+model BoardInvitation {
+  id           String    @id
+  boardId      String
+  board        Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  email        String    @db.Citext
+  role         BoardRole
+  tokenHash    String    @unique
+  invitedById  String
+  invitedBy    User      @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Restrict)
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  acceptedById String?
+  acceptedBy   User?     @relation("InvitationAcceptor", fields: [acceptedById], references: [id], onDelete: SetNull)
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([boardId])
+  @@index([email])
+  @@map("board_invitation")
+}
+
+enum TaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// PostgreSQL-only CHECK constraint task_name_not_empty is maintained in the
+// committed migration because Prisma's schema DSL cannot express CHECK constraints.
+// "sequence" is unique per board: Board.nextTaskSequence is incremented in the same
+// transaction that inserts the task, so numbering has no gaps from failed inserts.
+model Task {
+  id          String       @id
+  boardId     String
+  board       Board        @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  sequence    Int
+  name        String
+  status      TaskStatus   @default(NOT_STARTED)
+  priority    TaskPriority @default(MEDIUM)
+  createdById String
+  createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  version     Int          @default(1)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@unique([boardId, sequence])
+  @@index([boardId, status, sequence])
+  @@index([createdById])
+  @@map("task")
 }

@@ -61,11 +61,32 @@ const environmentSchema = z.object({
   // Validated now so a later provider slice cannot accept unvalidated secrets.
   GOOGLE_CLIENT_ID: optionalNonEmptyString,
   GOOGLE_CLIENT_SECRET: optionalNonEmptyString,
+  // The public origin invitation links point at; defaults to BETTER_AUTH_URL so a
+  // single-origin deployment (Nginx serving web + proxying /api) needs no extra value.
+  APP_PUBLIC_URL: urlWithProtocol(["http", "https"]).optional(),
+  INVITATION_TTL_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(24 * 30)
+    .default(24 * 7),
+  SEED_DEMO_DATA: booleanFromEnv.default(false),
+  ALLOW_PRODUCTION_DEMO_SEED: booleanFromEnv.default(false),
+  SMTP_HOST: z.string().min(1).default("127.0.0.1"),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(1025),
+  SMTP_SECURE: booleanFromEnv.default(false),
+  SMTP_USER: optionalNonEmptyString,
+  SMTP_PASSWORD: optionalNonEmptyString,
+  MAIL_FROM: z.string().min(3).default("Ksat <no-reply@ksat.local>"),
 });
 
 type ParsedEnvironment = z.infer<typeof environmentSchema>;
-export type Environment = Omit<ParsedEnvironment, "BETTER_AUTH_SECURE_COOKIES"> & {
+export type Environment = Omit<
+  ParsedEnvironment,
+  "BETTER_AUTH_SECURE_COOKIES" | "APP_PUBLIC_URL"
+> & {
   BETTER_AUTH_SECURE_COOKIES: boolean;
+  APP_PUBLIC_URL: string;
 };
 
 export class EnvironmentValidationError extends Error {
@@ -88,19 +109,21 @@ const productionRequiredKeys = [
   "BETTER_AUTH_SECRET",
   "BETTER_AUTH_TRUSTED_ORIGINS",
   "BETTER_AUTH_SECURE_COOKIES",
+  "SMTP_HOST",
+  "MAIL_FROM",
 ] as const;
 
 /** Parse a supplied record so startup and tests do not depend on process-global mutation. */
 export function parseEnvironment(input: Record<string, string | undefined>): Environment {
   if (input.NODE_ENV === "production") {
+    if (input.BETTER_AUTH_SECRET === developmentAuthSecret) {
+      throw new EnvironmentValidationError(["BETTER_AUTH_SECRET: must be a deployment secret"]);
+    }
     const missing = productionRequiredKeys.filter((key) => !input[key]);
     if (missing.length > 0) {
       throw new EnvironmentValidationError(
         missing.map((key) => `${key}: required when NODE_ENV is production`),
       );
-    }
-    if (input.BETTER_AUTH_SECRET === developmentAuthSecret) {
-      throw new EnvironmentValidationError(["BETTER_AUTH_SECRET: must be a deployment secret"]);
     }
   }
 
@@ -115,6 +138,7 @@ export function parseEnvironment(input: Record<string, string | undefined>): Env
     ...result.data,
     BETTER_AUTH_SECURE_COOKIES:
       result.data.BETTER_AUTH_SECURE_COOKIES ?? result.data.NODE_ENV === "production",
+    APP_PUBLIC_URL: result.data.APP_PUBLIC_URL ?? result.data.BETTER_AUTH_URL,
   };
 }
 
