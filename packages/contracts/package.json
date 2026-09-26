@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./common": {
+      "types": "./dist/common.d.ts",
+      "import": "./dist/common.js"
+    },
     "./health": {
       "types": "./dist/health.d.ts",
       "import": "./dist/health.js"
@@ -18,6 +22,18 @@
     "./problem": {
       "types": "./dist/problem.d.ts",
       "import": "./dist/problem.js"
+    },
+    "./pagination": {
+      "types": "./dist/pagination.d.ts",
+      "import": "./dist/pagination.js"
+    },
+    "./boards": {
+      "types": "./dist/boards.d.ts",
+      "import": "./dist/boards.js"
+    },
+    "./invitations": {
+      "types": "./dist/invitations.d.ts",
+      "import": "./dist/invitations.js"
     }
   },
   "scripts": {

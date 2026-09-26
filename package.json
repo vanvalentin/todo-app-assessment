@@ -8,18 +8,23 @@
     "pnpm": "11.18.0"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "dev": "pnpm --recursive --parallel run dev",
+    "dev:infra": "docker compose up -d --wait postgres redis minio mailpit",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "typecheck": "pnpm --recursive --if-present typecheck",
     "test": "pnpm --recursive --if-present test",
     "build": "pnpm --recursive --if-present build",
     "db:migrate": "pnpm --filter @ksat/api db:migrate",
+    "db:seed": "pnpm --filter @ksat/api db:seed:dev",
     "compose:config": "docker compose config --quiet",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps chromium",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm compose:config"
   },
   "devDependencies": {
     "@eslint/js": "9.22.0",
+    "@playwright/test": "1.55.0",
     "@types/node": "24.0.0",
     "eslint": "9.22.0",
     "eslint-config-prettier": "10.1.1",

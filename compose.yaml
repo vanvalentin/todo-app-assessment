@@ -1,5 +1,4 @@
 name: ${COMPOSE_PROJECT_NAME:-ksat}
-
 services:
   postgres:
     image: postgres:17.4-alpine
@@ -9,8 +8,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}
       interval: 5s
       timeout: 5s
       retries: 12
@@ -18,18 +22,30 @@ services:
 
   redis:
     image: redis:7.4.2-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
     volumes:
       - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD
+        - redis-cli
+        - ping
       interval: 5s
       timeout: 3s
       retries: 12
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: ["server", "/data", "--console-address", ":9001"]
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
@@ -39,7 +55,10 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:9000/minio/health/live > /dev/null"]
+      test:
+        - CMD-SHELL
+        - >-
+          curl -fsS http://localhost:9000/minio/health/live > /dev/null
       interval: 5s
       timeout: 5s
       retries: 12
@@ -53,12 +72,13 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio123}
       MINIO_BUCKET: ${MINIO_BUCKET:-ksat}
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint:
+      - /bin/sh
+      - -c
     command:
-      - |
-        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
-          sleep 1
-        done
+      - |-
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" \
+          "$${MINIO_ROOT_PASSWORD}"; do sleep 1; done
         mc mb --ignore-existing "local/$${MINIO_BUCKET}"
     restart: "no"
 
@@ -73,7 +93,10 @@ services:
       - "${MAILPIT_HTTP_PORT:-8025}:8025"
       - "${MAILPIT_SMTP_PORT:-1025}:1025"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8025/api/v1/info"]
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://localhost:8025/api/v1/info
       interval: 5s
       timeout: 5s
       retries: 12
@@ -91,10 +114,23 @@ services:
       HEALTH_CHECK_TIMEOUT_MS: ${HEALTH_CHECK_TIMEOUT_MS:-2000}
       SHUTDOWN_TIMEOUT_MS: ${SHUTDOWN_TIMEOUT_MS:-10000}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:8080}
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-local-compose-only-identity-secret-change-before-deploying}
-      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      BETTER_AUTH_SECRET: >-
+        ${BETTER_AUTH_SECRET:-local-compose-only-identity-secret-change-before-deploying}
+      BETTER_AUTH_TRUSTED_ORIGINS: >-
+        ${BETTER_AUTH_TRUSTED_ORIGINS:-http://localhost:8080,http://localhost:5173}
       BETTER_AUTH_SECURE_COOKIES: ${BETTER_AUTH_SECURE_COOKIES:-false}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ksat}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:8080}
+      INVITATION_TTL_HOURS: ${INVITATION_TTL_HOURS:-168}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      ALLOW_PRODUCTION_DEMO_SEED: ${ALLOW_PRODUCTION_DEMO_SEED:-false}
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: "Ksat <no-reply@ksat.local>"
+      DATABASE_URL: >-
+        ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ksat}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://minio:9000}
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -111,7 +147,13 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-    command: ["./node_modules/.bin/prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"]
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+        && if [ "$${SEED_DEMO_DATA}" = "true" ]; then node dist/src/seed.js;
+        fi
     restart: "no"
 
   api:
@@ -132,15 +174,18 @@ services:
         condition: service_healthy
     ports:
       - "${API_PORT:-3000}:3000"
-    command: ["node", "dist/src/server.js"]
+    command:
+      - node
+      - dist/src/server.js
     healthcheck:
       test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
-        ]
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/health/ready').then(
+          r => process.exit(r.ok ? 0 : 1)
+          ).catch(() => process.exit(1))
       interval: 5s
       timeout: 5s
       retries: 12
@@ -162,9 +207,13 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_healthy
-    command: ["node", "dist/src/worker.js"]
+    command:
+      - node
+      - dist/src/worker.js
     healthcheck:
-      test: ["CMD-SHELL", "kill -0 1"]
+      test:
+        - CMD-SHELL
+        - kill -0 1
       interval: 10s
       timeout: 3s
       retries: 3
@@ -180,7 +229,10 @@ services:
     ports:
       - "${WEB_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/"]
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q --spider http://127.0.0.1:8080/
       interval: 5s
       timeout: 3s
       retries: 12

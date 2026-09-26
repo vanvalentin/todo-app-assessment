@@ -12,6 +12,8 @@ COPY packages/contracts/package.json packages/contracts/package.json
 RUN pnpm install --frozen-lockfile
 
 COPY apps/web apps/web
+COPY packages/config packages/config
+COPY packages/contracts packages/contracts
 RUN pnpm --filter @ksat/web build
 
 FROM nginxinc/nginx-unprivileged:1.27.5-alpine AS production

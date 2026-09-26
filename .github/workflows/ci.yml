@@ -1,0 +1,212 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "24.12.0"
+  PNPM_VERSION: "11.18.0"
+
+jobs:
+  quality:
+    name: Quality gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          # The dependency cache key is derived from pnpm-lock.yaml.
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit and component tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Validate Compose configuration
+        run: pnpm compose:config
+
+  database:
+    name: Migrations and PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.4-alpine
+        env:
+          POSTGRES_DB: ksat
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: >-
+        postgresql://postgres:postgres@127.0.0.1:5432/ksat
+      INTEGRATION_DATABASE_URL: >-
+        postgresql://postgres:postgres@127.0.0.1:5432/ksat
+      SHADOW_DATABASE_URL: >-
+        postgresql://postgres:postgres@127.0.0.1:5432/ksat_shadow
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate the Prisma client
+        run: pnpm --filter @ksat/api db:generate
+
+      - name: Apply the committed migrations
+        run: pnpm --filter @ksat/api db:migrate
+
+      - name: Create the shadow database
+        run: >-
+          PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d postgres
+          -c 'CREATE DATABASE ksat_shadow;'
+
+      - name: Guard against migration drift
+        run: pnpm --filter @ksat/api db:migrate:diff
+
+      - name: PostgreSQL integration tests
+        run: pnpm --filter @ksat/api test:integration
+
+  browser:
+    name: Playwright journeys
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.4-alpine
+        env:
+          POSTGRES_DB: ksat
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7.4.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ksat
+      REDIS_URL: redis://127.0.0.1:6379
+      BETTER_AUTH_URL: http://localhost:5173
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:5173
+      BETTER_AUTH_SECRET: ci-only-ksat-better-auth-secret-change-before-use
+      E2E_BASE_URL: http://localhost:5173
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Prepare the database
+        run: |
+          pnpm --filter @ksat/api db:generate
+          pnpm --filter @ksat/api db:migrate
+
+      - name: Start the API
+        run: nohup pnpm --filter @ksat/api dev > api.log 2>&1 &
+
+      - name: Start the web client
+        run: nohup pnpm --filter @ksat/web dev > web.log 2>&1 &
+
+      - name: Wait for the application
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:3000/health/live > /dev/null \
+              && curl -sf http://127.0.0.1:5173 > /dev/null; then
+              echo "application is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "application did not become ready"
+          cat api.log web.log
+          exit 1
+
+      - name: Run the browser journeys
+        run: pnpm exec playwright test
+
+      - name: Show server logs
+        if: failure()
+        run: cat api.log web.log
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-artifacts
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
