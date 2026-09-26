@@ -88,6 +88,31 @@ If the workspace is not scaffolded yet, create only the files needed by the curr
 - Test behavior rather than implementation details. Include unauthorized/forbidden cases and regression tests for fixed bugs.
 - Control clocks, random IDs, and timezones where they affect assertions.
 - Do not delete, skip, or weaken a test merely to make a build pass.
+
+### What to test
+
+Tests exist to catch regressions and to record intent for the next contributor, human or agent. Every test must be able to fail for a reason a user or API client would notice. Name tests from acceptance criteria before implementing, and review AI-written tests as strictly as production code.
+
+Write:
+
+- **API/services:** business rules, authorization (unauthenticated `401`, non-member/insufficient role `403`, cross-board ID `404`), validation, `409` concurrency conflicts, transactional invariants, idempotent jobs, and Problem Details codes. Prefer Supertest integration tests over mocked repositories for board-scoped queries.
+- **Contracts:** schema edge cases that the API and web both rely on (normalization, boundaries, rejected shapes), not every valid field.
+- **React (Testing Library + MSW):** user-observable behavior through roles and labels: loading, empty, error/retry, and disabled/pending states; form validation and API field-error mapping; optimistic updates and their rollback; role-gated controls; auth redirects; conflict recovery; and keyboard/focus behavior for custom widgets (menus, dialogs, radio groups, drag alternatives).
+- **Pure logic:** date/overdue/recurrence calculations, permission helpers, and mappers, with controlled time.
+- **Playwright:** a small number of critical end-to-end journeys (sign up/in, create board and task, move task, invite and accept). Extend an existing journey before adding a new one.
+- **Regressions:** one focused test per fixed bug.
+
+Do not write:
+
+- Static-markup tests that only assert headings, copy, CSS classes, Figma labels, or that inert/deferred controls are disabled. Browser review against Figma covers visual fidelity.
+- Snapshot tests of components or large DOM trees.
+- Tests of implementation details: internal state, hook calls, query keys, component props, or that a mocked function was called when the user-visible outcome can be asserted instead.
+- Tests that only exercise mocks, library behavior (React Hook Form, TanStack Query, Radix, Zod, Better Auth), or TypeScript-guaranteed shapes.
+- Absence assertions for features from later phases ("does not show attachments").
+- Duplicates: before adding a case, check whether an existing test already reaches the same code path and outcome; extend it with an assertion instead.
+- Separate tests for each trivial variant; use `it.each` for tabular inputs.
+
+Keep runs cheap: run the affected test files during development, use quiet reporters, and report only failures. Run the full suites once before finishing.
 - A task is complete only when relevant format, lint, typecheck, tests, and build commands pass, or when the final response names the exact blocker.
 
 ## Git hygiene
