@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 4a (task board) is complete. The Kanban walking skeleton is in place: task creation, editing, movement, and deletion for name, status, and priority with optimistic concurrency, the Figma `1:128` board adapted responsively, the first Playwright journey, and GitHub Actions. Assignee/reporter, due dates, search/filter/sort/archive, descriptions, dependencies, and attachments remain in later phases.
+> **Project status:** delivery phase 4b (people and dates) is complete. Tasks now carry a board-member assignee and reporter plus a calendar due date; the Figma new/edit modals (`1:1045`, `1:479`) replace the interim dialog, cards show assignee/date metadata, and the browser journey creates, edits, persists, and deletes through the full modal. Search/filter/sort/archive, descriptions, dependencies, and attachments remain in later phases.
 
 ## Product scope
 
@@ -154,7 +154,7 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 - A task, its assignee, reporter, and every dependency belong to the same board.
 - A task cannot depend on itself and dependency cycles are rejected in a transaction.
-- Reporter defaults to the current user. Contributors can select themselves; managers/admins can select another board member.
+- Reporter defaults to the current user. Any active board member, including a contributor, may select any other active member as reporter or assignee; board membership—not role—is the authorization boundary for task work.
 - Only active board members can read board data. Contributors manage tasks; managers/admins manage membership and invitations; only admins perform destructive board operations.
 - `ARCHIVED` is a task state and is excluded from list queries by default. Deletion is a separate, explicit operation.
 - Task updates include a `version`; stale updates return `409 Conflict` rather than silently overwriting another edit.
@@ -164,7 +164,7 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
-The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Their raw SQL definitions in `apps/api/prisma/migrations/20270301000000_boards_and_membership/migration.sql` are the source of truth; the corresponding comments in `schema.prisma` prevent the omission from being mistaken for accidental drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
+The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Phase 4a adds the raw `task_name_not_empty` check. Phase 4b adds composite foreign keys from `task(boardId, assigneeId/reporterId)` to `board_membership(boardId, userId)`, because Prisma cannot model the assignee's column-specific `ON DELETE SET NULL` without also making the task's required `boardId` nullable. Their committed migrations are the source of truth; matching comments in `schema.prisma` prevent the omissions from being mistaken for drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
 
 ## Identity delivery (phase 2)
 
@@ -257,7 +257,7 @@ Static Figma assets are committed verbatim under `apps/web/src/assets/boards/` a
 
 ## Task board delivery (phase 4a)
 
-Phase 4a is the first Kanban slice: a board screen with three active columns, task creation, editing, movement, and deletion for name, status, and priority, plus optimistic concurrency. The card deliberately renders only the data that exists today — name, status, priority, board sequence, and creator — because assignee, dates, dependencies, attachments, and recurrence arrive with later phases.
+Phase 4a is the first Kanban slice: a board screen with three active columns, task creation, editing, movement, and deletion for name, status, and priority, plus optimistic concurrency. Phase 4b subsequently adds assignee, reporter, and due-date metadata to its cards and replaces the interim dialog; dependencies, attachments, descriptions, and recurrence remain later phases.
 
 ### Routes
 
@@ -290,7 +290,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 - Optimistic mutations: moving, editing, and deleting write into the TanStack Query cache immediately, restore the exact snapshot when the request fails, and always reconcile with the server afterwards. A `409` reloads the authoritative task and announces the conflict.
 - Two entry points: the board's own **New Task** control and the shell CTA, which is enabled whenever a board screen supplies a handler and stays disabled elsewhere. Focus returns to whichever control opened the dialog.
 - Card affordance: the card is one pointer target, so the whole block shows `cursor: pointer` and hovering tints only its border. The title keeps its type and is never underlined, and keyboard focus keeps the visible ring.
-- Card interaction: a single click anywhere on a card opens the task dialog, which owns the name, column, and priority and offers **Delete task** (confirmed in a second dialog). The frame's per-card overflow menu is deliberately not implemented; phase 4b replaces this interim dialog with the designed edit modal, and the request is recorded in the delivery plan.
+- Card interaction: a single click anywhere on a card opens the designed edit modal, which owns name, status, priority, assignee, reporter, due date, and deletion (confirmed in a second dialog). The frame's per-card overflow menu remains deliberately absent.
 - Movement and its feedback: pointer dragging uses `@dnd-kit/core` with a distance threshold. The original card stays in its column, dimmed, as the place it left, and a drag overlay follows the pointer.
 - Live drop target: the column under the pointer is highlighted while a card is held — an accent wash, an accent border, and an inset ring, so the state is not carried by colour alone — and only that column is highlighted. An empty column's dashed placeholder joins the highlight, so the target reads as one surface.
 - No drop animation: the card genuinely relocates to another column, and animating the overlay back to the source looked like a snap-back. The card that landed is highlighted briefly instead.
@@ -303,7 +303,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 
 ### Browser journeys and CI
 
-`e2e/` holds the Playwright journeys and `playwright.config.ts` targets `E2E_BASE_URL` (default `http://localhost:5173`). The first journey signs up a brand-new account with no seed data, creates a board, creates a task, moves it to `IN_PROGRESS`, reloads, and asserts the move persisted; it also measures page and column overflow at 1280px and 375px.
+`e2e/` holds the Playwright journeys and `playwright.config.ts` targets `E2E_BASE_URL` (default `http://localhost:5173`). The seed-independent journey signs up a brand-new account, creates a board and task with self-assignment and a due date, edits it through the full modal, moves it through the Kanban columns, reloads to prove persistence, and deletes it; it also measures page and column overflow at 1280px and 375px.
 
 `.github/workflows/ci.yml` runs three jobs with Node `24.12.0`, Corepack-pinned pnpm `11.18.0`, and dependency caching keyed from `pnpm-lock.yaml`:
 
@@ -314,6 +314,37 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 ### Seed
 
 `pnpm db:seed` (and the Compose `migrate` job when `SEED_DEMO_DATA=true`) creates a deterministic task set across the demo boards, including one `ARCHIVED` row that demonstrates its exclusion from board reads. Each board's `nextTaskSequence` is set just past the seeded sequences so tasks created later never collide with them.
+
+## People and dates delivery (phase 4b)
+
+Phase 4b extends the Kanban slice with an optional assignee, required reporter, and optional due date. Both people must be active members of the task's own board. Reporter defaults to the caller; every board role may choose any member for either field. The designed create (`1:1045`) and edit (`1:479`) modals replace the phase 4a interim dialog.
+
+### Persistence, contract, and authorization
+
+- Migration `20270501000000_task_people_and_dates` adds nullable `assigneeId`, required `reporterId` (backfilled from `createdById`), and nullable PostgreSQL `DATE` `dueDate`, plus board/assignee and board/date indexes.
+- Service checks run inside the write transaction. PostgreSQL composite foreign keys independently enforce same-board membership: removing an assignee membership clears `assigneeId`; reporter membership cannot be removed while referenced. A board deletion still cascades through its tasks.
+- Create defaults reporter to the caller and accepts an optional assignee/date. PATCH remains a full-state, versioned update, so drag moves preserve people and date. Invalid selections return `422 TASK_ASSIGNEE_NOT_MEMBER` or `422 TASK_REPORTER_NOT_MEMBER`.
+- Task responses embed safe assignee/reporter previews and serialize due dates as strict `YYYY-MM-DD` strings.
+
+### Accepted decisions
+
+- **Any member may choose any reporter.** Choice: authorization depends on active membership rather than role. Reason: contributors already manage tasks and reporter assignment is task metadata, not board administration. Consequence: UI and API expose the complete active roster to every board member; both layers still reject users outside the board.
+- **Due dates are calendar dates.** Choice: store PostgreSQL `DATE`, not a UTC timestamp. Reason: a due date names a day and must not shift when viewed in another timezone. Consequence: API values are `YYYY-MM-DD`; the web computes `days left`, `Due today`, and `overdue` against the viewer's local calendar day. UTC remains authoritative for actual timestamps.
+- **Radix provides behavior only.** `@radix-ui/react-dialog`, `react-select`, and `react-popover` provide focus, layering, and keyboard semantics; Sass Modules and repository tokens own every visual style.
+- **Later modal sections are omitted.** Description/Markdown, tags, projects, dependencies, and attachments remain phases 5a/5b rather than appearing as fake controls.
+
+### Web behavior
+
+- The create modal supports status, priority, assignee, reporter, due date, validation, and **Create more**, which resets only the title while keeping selected properties.
+- The edit modal shows the board/task breadcrumb, saved/dirty state, expand/close controls, created/updated metadata, **Discard changes**, versioned **Save changes**, Ctrl/Cmd+Enter submission, and confirmed deletion.
+- A `409` keeps the modal open and offers **Reload latest**; reloading replaces the form and baseline version before another save. A stale member `422` marks the relevant person pill and refreshes member data through the normal query lifecycle.
+- Cards show assignee identity and due date. `Overdue` is written as text as well as tinted, so meaning is not carried by color alone.
+- Dialogs are full-screen sheets below 40rem, property pills wrap, focus returns to the opener, and reduced-motion preferences disable modal transitions.
+
+### Verification scope
+
+Contract tests reject impossible dates; service/HTTP tests cover defaults and 422 errors; PostgreSQL integration tests cover cross-board rejection, persisted people/date values, optimistic concurrency, and assignee clearing on membership removal. Testing Library/MSW covers create-more, people/date submission, conflict reload, membership errors, discard, deletion, and controlled-clock overdue rendering. Playwright extends the unseeded signup journey through create with assignee/date, edit/persist, and modal deletion.
+
 
 ## API conventions
 
@@ -454,7 +485,7 @@ Compose health checks and `depends_on: condition: service_healthy` will gate sta
 - **Unit:** domain rules, recurrence calculations, authorization decisions, validators, cache-key/invalidation logic, and React components.
 - **API integration:** Express app factory + Supertest against isolated PostgreSQL/Redis/MinIO test dependencies; test Better Auth credential/session flows and both allowed and forbidden application paths. Social-provider tests use mocked provider responses.
 - **Contract:** generated application OpenAPI snapshot, Better Auth route-reference availability, and representative request/response schemas.
-- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it (plus frame-width and narrow-width overflow checks); later slices add task filtering/archiving, attachments, and member invitation acceptance.
+- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion. Later slices add task filtering/archiving and attachments.
 - **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions.
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
@@ -499,7 +530,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 3. **Boards and membership (complete)** — board creation/list/detail, admin board editing, seeded demo board, member list, invitations, Mailpit flow, authorization, and the responsive web screens with invitation acceptance.
 4. **Kanban walking skeleton**
    - **4a — Task board (complete):** task board page (`1:128`); create, edit, and delete tasks with name, status, and priority; move tasks between columns; optimistic concurrency. Also adds CI and the first Playwright journey: sign up → create board → create task → move it.
-   - **4b — People and dates:** assignee and reporter limited to board members, due dates, and the new/edit task modals (`1:1045`, `1:479`). The designed edit modal replaces the interim phase 4a dialog, so a single click on a card opens the full modal (with deletion) instead of the reduced name/column/priority dialog.
+   - **4b — People and dates (complete):** assignee and reporter limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
    - **4c — Finding work:** search, filter, and sort in URL search parameters; archive and an explicit “show archived” toggle; cancellation of stale searches.
 5. **Task detail**
    - **5a — Content and dependencies:** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
