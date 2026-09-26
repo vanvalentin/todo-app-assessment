@@ -23,6 +23,8 @@ model User {
   sentInvitations     BoardInvitation[] @relation("InvitationInviter")
   acceptedInvitations BoardInvitation[] @relation("InvitationAcceptor")
   createdTasks        Task[]            @relation("TaskCreator")
+  assignedTasks       Task[]            @relation("TaskAssignee")
+  reportedTasks       Task[]            @relation("TaskReporter")
 
   @@map("user")
 }
@@ -155,6 +157,18 @@ enum TaskPriority {
 // committed migration because Prisma's schema DSL cannot express CHECK constraints.
 // "sequence" is unique per board: Board.nextTaskSequence is incremented in the same
 // transaction that inserts the task, so numbering has no gaps from failed inserts.
+//
+// PostgreSQL-only composite foreign keys task_assignee_board_membership_fkey and
+// task_reporter_board_membership_fkey are maintained in the committed migration
+// because Prisma cannot express a composite FK alongside a required local column
+// (boardId is NOT NULL, so Prisma refuses a SetNull/composite relation through it).
+// They enforce that assigneeId/reporterId name an active member of the *same* board
+// as the task, referencing board_membership's (boardId, userId) unique index.
+// assigneeId also has a plain FK to user(id) (SetNull) and reporterId to user(id)
+// (Restrict) below, purely so Prisma can `include` their previews; the composite
+// FKs are the real membership invariant and are backstopped by a service-layer
+// check for the same-transaction race. See
+// apps/api/prisma/migrations/20270501000000_task_people_and_dates/migration.sql.
 model Task {
   id          String       @id
   boardId     String
@@ -163,6 +177,12 @@ model Task {
   name        String
   status      TaskStatus   @default(NOT_STARTED)
   priority    TaskPriority @default(MEDIUM)
+  assigneeId  String?
+  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporterId  String
+  reporter    User         @relation("TaskReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  /** A calendar date (no time-of-day, no timezone): see isoDateSchema in @ksat/contracts. */
+  dueDate     DateTime?    @db.Date
   createdById String
   createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
   version     Int          @default(1)
@@ -171,6 +191,8 @@ model Task {
 
   @@unique([boardId, sequence])
   @@index([boardId, status, sequence])
+  @@index([boardId, assigneeId])
+  @@index([boardId, dueDate])
   @@index([createdById])
   @@map("task")
 }
