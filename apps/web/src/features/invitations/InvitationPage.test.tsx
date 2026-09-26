@@ -85,26 +85,6 @@ describe("InvitationPage", () => {
     expect(mocks.signOut).toHaveBeenCalledOnce();
   });
 
-  it("surfaces a sign-out error without clearing the active session cache", async () => {
-    usePreview();
-    mocks.useSession.mockReturnValue({ data: { user: ada }, error: undefined, isPending: false });
-    mocks.signOut.mockResolvedValue({
-      error: { code: "SIGN_OUT_FAILED", status: 503 },
-      session: null,
-    });
-
-    const { queryClient } = renderInvitationPage();
-    queryClient.setQueryData(["identity-cache"], "keep-me");
-
-    fireEvent.click(await screen.findByRole("button", { name: "Use a different account" }));
-
-    expect(
-      await screen.findByText("We couldn’t switch accounts. Please try again."),
-    ).toBeInTheDocument();
-    expect(queryClient.getQueryData(["identity-cache"])).toBe("keep-me");
-    expect(screen.getByRole("button", { name: "Use a different account" })).toBeEnabled();
-  });
-
   it("disables account switching while sign-out is pending", async () => {
     usePreview();
     mocks.useSession.mockReturnValue({ data: { user: ada }, error: undefined, isPending: false });
@@ -130,6 +110,7 @@ describe("InvitationPage", () => {
       await screen.findByText("We couldn’t switch accounts. Please try again."),
     ).toBeInTheDocument();
     expect(queryClient.getQueryData(["identity-cache"])).toBe("keep-me");
+    expect(screen.getByRole("button", { name: "Use a different account" })).toBeEnabled();
   });
 
   it("shows the switch-account failure after a rejected sign-out", async () => {

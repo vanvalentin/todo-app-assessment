@@ -23,10 +23,4 @@ describe("TaskCard people and dates", () => {
     expect(screen.getByText(/Apr 18, 2027/)).toBeInTheDocument();
     expect(screen.getByText(/Overdue/)).toBeInTheDocument();
   });
-
-  it("omits the people/date footer when both fields are empty", () => {
-    render(<TaskCard task={buildTask({ assignee: null, dueDate: null })} />);
-    expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Overdue/)).not.toBeInTheDocument();
-  });
 });

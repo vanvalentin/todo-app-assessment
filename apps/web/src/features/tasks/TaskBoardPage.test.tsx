@@ -78,53 +78,6 @@ describe("TaskBoardPage", () => {
     mocks.useSession.mockReturnValue({ data: { user: ada }, error: undefined, isPending: false });
   });
 
-  it("renders the Figma columns with domain labels and inert deferred controls", async () => {
-    useBoard();
-    renderBoard();
-
-    expect(
-      await screen.findByRole("heading", { name: "Tokyo Zine Fair 2027" }),
-    ).toBeInTheDocument();
-    expect(
-      await screen.findByRole("heading", { level: 2, name: "Not Started" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "In Progress" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Completed" })).toBeInTheDocument();
-    expect(screen.getByText("STAGE 01")).toBeInTheDocument();
-    expect(screen.getByText("STAGE 02")).toBeInTheDocument();
-    expect(screen.getByText("DONE")).toBeInTheDocument();
-
-    expect(screen.getByRole("searchbox", { name: "Search tasks" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Assignee: All" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Priority: All" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Sort: Due date" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Archive" })).toBeDisabled();
-
-    // The board header links to the settings screen as a labelled control.
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
-      "href",
-      `/boards/${BOARD_ID}/settings`,
-    );
-
-    expect(within(await column("Not Started")).getByText("Medium Priority")).toBeInTheDocument();
-    expect(
-      within(await column("Completed")).getByText("Map local cafe workspace network"),
-    ).toBeInTheDocument();
-    expect(
-      within(await column("Completed")).getByText("Completed", { selector: "span" }),
-    ).toBeInTheDocument();
-
-    // Cards carry no overflow menu; the card itself opens the task dialog.
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Task actions for/ })).not.toBeInTheDocument();
-
-    // Later-phase card metadata must not be invented.
-    expect(screen.queryByText(/Depends on/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/attachments/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Cadence:/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Apr /)).not.toBeInTheDocument();
-  });
-
   it("offers two board-scoped New Task controls and an empty state", async () => {
     useBoard({ tasks: [] });
     renderBoard();

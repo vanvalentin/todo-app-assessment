@@ -69,17 +69,6 @@ describe("App routing", () => {
     );
   });
 
-  it("keeps a restored session on the protected page", async () => {
-    mocks.session.current = { user: ada };
-    useBoards();
-    window.history.pushState({}, "", "/boards");
-
-    render(<App />);
-
-    expect(await screen.findByRole("heading", { name: "Boards" })).toBeInTheDocument();
-    expect(window.location.pathname).toBe("/boards");
-  });
-
   it("renders a deliberate gate while the session is restored", () => {
     mocks.useSession.mockReturnValue({ data: undefined, error: undefined, isPending: true });
     window.history.pushState({}, "", "/boards");

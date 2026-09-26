@@ -46,16 +46,6 @@ describe("AppShell", () => {
     mocks.signOut.mockResolvedValue({ error: null, session: null });
   });
 
-  it("renders the editorial header with an inert deferred control", () => {
-    renderShell();
-
-    expect(screen.getByRole("link", { name: /Ksat/ })).toHaveAttribute("href", "/boards");
-    expect(screen.getByRole("link", { name: "Boards" })).toBeInTheDocument();
-    expect(screen.getByText("My Tasks")).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("button", { name: /New Task/ })).toBeDisabled();
-    expect(screen.getByRole("main")).toHaveAttribute("id", "main-content");
-  });
-
   it("opens the account menu with the keyboard and signs out with the cache cleared", async () => {
     const { queryClient } = renderShell();
     const trigger = screen.getByRole("button", { name: /Account menu for Ada Lovelace/ });

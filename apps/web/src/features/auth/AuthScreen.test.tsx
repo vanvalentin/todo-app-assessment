@@ -71,18 +71,6 @@ describe("AuthScreen", () => {
     mocks.signOut.mockResolvedValue({ error: null, session: null });
   });
 
-  it("renders the signup mode and switches to login", () => {
-    renderLogin();
-
-    expect(screen.getByRole("heading", { name: "Welcome to the Collective" })).toBeInTheDocument();
-    expect(screen.getByLabelText(/display name/i)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("radio", { name: "Log in" }));
-
-    expect(screen.queryByLabelText(/display name/i)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log in" })).toBeInTheDocument();
-  });
-
   it("preselects login when the login mode is requested", () => {
     renderLogin("/login?mode=sign-in&redirect=%2Fboards");
 

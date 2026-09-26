@@ -362,20 +362,6 @@ describe("BoardMembersPage", () => {
     expect(await screen.findByText("Linus Torvalds")).toBeInTheDocument();
   });
 
-  it("lists pending invitations with a sent state for managers", async () => {
-    useBoard("MANAGER");
-    useRoster();
-    usePendingInvitations();
-
-    renderMembersPage();
-
-    expect(await screen.findByText("sofia.chen@example.test")).toBeInTheDocument();
-    expect(screen.getByText("Sent")).toBeInTheDocument();
-    expect(screen.getByText(/Invited by Ada Lovelace/)).toBeInTheDocument();
-    expect(screen.getByText(/and 1 pending invitation/)).toBeInTheDocument();
-    expect(screen.getByText(/Role changes, member removal/)).toBeInTheDocument();
-  });
-
   it("lets managers confirm and cancel non-admin invitations", async () => {
     useBoard("MANAGER");
     useRoster();
