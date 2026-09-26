@@ -5,6 +5,7 @@ import type {
   Task,
   TaskListResponse,
   TaskPriority,
+  UserPreview,
 } from "@ksat/contracts";
 import { queryKeys } from "../../lib/api/queryKeys";
 import { createTask, deleteTask, updateTask } from "../../lib/api/tasks";
@@ -16,6 +17,10 @@ export interface TaskEditValues {
   readonly name: string;
   readonly status: ActiveTaskStatus;
   readonly priority: TaskPriority;
+  /** The full preview, not just an id, so the optimistic cache can render it immediately. */
+  readonly assignee: UserPreview | null;
+  readonly reporter: UserPreview;
+  readonly dueDate: string | null;
 }
 
 interface Snapshot {
@@ -62,13 +67,29 @@ export function useTaskMutations(boardId: string) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ task, name, status, priority }: TaskEditValues) =>
-      updateTask(task.id, { name, status, priority, version: task.version }),
-    onMutate: async ({ task, name, status, priority }: TaskEditValues): Promise<Snapshot> => {
+    mutationFn: ({ task, name, status, priority, assignee, reporter, dueDate }: TaskEditValues) =>
+      updateTask(task.id, {
+        name,
+        status,
+        priority,
+        assigneeId: assignee?.id ?? null,
+        reporterId: reporter.id,
+        dueDate,
+        version: task.version,
+      }),
+    onMutate: async (values: TaskEditValues): Promise<Snapshot> => {
       await queryClient.cancelQueries({ queryKey: tasksKey });
       const previous = queryClient.getQueryData<TasksData>(tasksKey);
       queryClient.setQueryData<TasksData>(tasksKey, (current) =>
-        replaceTask(current, { ...task, name, status, priority }),
+        replaceTask(current, {
+          ...values.task,
+          name: values.name,
+          status: values.status,
+          priority: values.priority,
+          assignee: values.assignee,
+          reporter: values.reporter,
+          dueDate: values.dueDate,
+        }),
       );
       return { previous };
     },

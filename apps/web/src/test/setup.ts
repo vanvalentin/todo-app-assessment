@@ -20,6 +20,28 @@ if (globalThis.AbortController !== NodeAbortController) {
   globalThis.AbortSignal = NodeAbortSignal;
 }
 
+// Radix Select/Popover use the pointer-capture and scroll APIs jsdom does not implement;
+// these no-op stubs let their internal event handling run without throwing in tests.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+}
+if (!Element.prototype.setPointerCapture) {
+  Element.prototype.setPointerCapture = () => {};
+}
+if (!Element.prototype.releasePointerCapture) {
+  Element.prototype.releasePointerCapture = () => {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 beforeAll(() => {
   server.listen({ onUnhandledRequest: "error" });
 });

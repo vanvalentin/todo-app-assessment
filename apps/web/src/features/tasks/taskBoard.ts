@@ -64,13 +64,56 @@ export function taskBoardErrorMessage(error: unknown): string {
   return "We couldn’t load this board. Please retry.";
 }
 
+export type DueTone = "upcoming" | "today" | "overdue";
+
+export interface DueDateInfo {
+  readonly label: string;
+  readonly badge: string;
+  readonly tone: DueTone;
+}
+
+/** A calendar date at UTC midnight, compared against the viewer's local calendar day. */
+function localDayDiff(dueDate: string, now: Date): number {
+  const [year, month, day] = dueDate.split("-").map(Number) as [number, number, number];
+  const dueDay = Date.UTC(year, month - 1, day);
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((dueDay - today) / (24 * 60 * 60 * 1000));
+}
+
+/** Formats a due date for display; overdue/due-today are marked with text, not colour alone. */
+export function describeDueDate(
+  dueDate: string | null,
+  now: Date = new Date(),
+): DueDateInfo | null {
+  if (dueDate === null) return null;
+  const label = new Date(`${dueDate}T00:00:00`).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const diff = localDayDiff(dueDate, now);
+  if (diff < 0) {
+    return { label, badge: `${Math.abs(diff)}d overdue`, tone: "overdue" };
+  }
+  if (diff === 0) {
+    return { label, badge: "Due today", tone: "today" };
+  }
+  return { label, badge: `${diff}d left`, tone: "upcoming" };
+}
+
 export function taskMutationErrorMessage(error: unknown): string {
   if (error instanceof NetworkError) {
     return "We couldn’t reach Ksat. Your change was not saved.";
   }
   if (error instanceof ApiError) {
     if (error.code === "TASK_VERSION_CONFLICT") {
-      return "Someone else changed this task first. The board now shows their version.";
+      return "Someone else changed this task first. Reload the latest values before saving again.";
+    }
+    if (error.code === "TASK_ASSIGNEE_NOT_MEMBER") {
+      return "That assignee is no longer a member of this board.";
+    }
+    if (error.code === "TASK_REPORTER_NOT_MEMBER") {
+      return "That reporter is no longer a member of this board.";
     }
     if (error.status === 403) return "You don’t have permission to change tasks on this board.";
     if (error.status === 404) return "This task is no longer available to you.";

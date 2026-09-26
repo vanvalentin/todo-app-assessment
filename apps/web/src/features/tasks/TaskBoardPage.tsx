@@ -19,6 +19,7 @@ import searchIcon from "../../assets/tasks/board-search.svg";
 import chevronIcon from "../../assets/tasks/select-chevron.svg";
 import { AppShell } from "../../components/AppShell/AppShell";
 import { Toast, type ToastTone } from "../../components/Toast/Toast";
+import { useSession } from "../auth/useSession";
 import { fetchBoard } from "../../lib/api/boards";
 import { ApiError } from "../../lib/api/client";
 import { queryKeys } from "../../lib/api/queryKeys";
@@ -26,7 +27,7 @@ import { fetchBoardTasks } from "../../lib/api/tasks";
 import { TaskCard } from "./TaskCard";
 import { TaskColumn } from "./TaskColumn";
 import { TaskDeleteDialog } from "./TaskDeleteDialog";
-import { TaskDialog, type TaskDialogValues } from "./TaskDialog";
+import { TaskModal } from "./TaskModal";
 import {
   TASK_COLUMNS,
   columnTitle,
@@ -34,7 +35,7 @@ import {
   taskBoardErrorMessage,
   taskMutationErrorMessage,
 } from "./taskBoard";
-import { useTaskMutations } from "./useTaskMutations";
+import { useTaskMutations, type TaskEditValues } from "./useTaskMutations";
 import styles from "./TaskBoardPage.module.scss";
 
 interface TaskNotice {
@@ -52,6 +53,14 @@ function activeStatusOf(value: unknown): ActiveTaskStatus | null {
 
 export function TaskBoardPage() {
   const { boardId = "" } = useParams();
+  const { session } = useSession();
+  const currentUser = session
+    ? {
+        id: session.user.id,
+        name: session.user.name,
+        avatarSeed: session.user.avatarSeed ?? session.user.id,
+      }
+    : null;
   const boardQuery = useQuery({
     queryKey: queryKeys.board(boardId),
     queryFn: ({ signal }) => fetchBoard(boardId, signal),
@@ -128,6 +137,9 @@ export function TaskBoardPage() {
         name: task.name,
         status,
         priority: task.priority,
+        assignee: task.assignee,
+        reporter: task.reporter,
+        dueDate: task.dueDate,
       });
       flagMovedTask(task.id);
       notify("success", `Moved “${task.name}” to ${columnTitle(status)}.`);
@@ -136,13 +148,13 @@ export function TaskBoardPage() {
     }
   };
 
-  const submitEdit = async (task: Task, values: TaskDialogValues) => {
-    await updateMutation.mutateAsync({ task, ...values });
-    if (values.status === task.status) {
+  const submitEdit = async (values: TaskEditValues) => {
+    await updateMutation.mutateAsync(values);
+    if (values.status === values.task.status) {
       notify("success", `Saved “${values.name}”.`);
       return;
     }
-    flagMovedTask(task.id);
+    flagMovedTask(values.task.id);
     notify("success", `Moved “${values.name}” to ${columnTitle(values.status)}.`);
   };
 
@@ -379,21 +391,29 @@ export function TaskBoardPage() {
         ) : null}
       </div>
 
-      {createOpen ? (
-        <TaskDialog
+      {createOpen && board && currentUser ? (
+        <TaskModal
+          boardId={board.id}
+          boardName={board.name}
+          currentUser={currentUser}
           onClose={closeCreate}
-          onSubmit={(values: TaskDialogValues) => createMutation.mutateAsync(values)}
+          onCreate={(values) => createMutation.mutateAsync(values)}
+          onSave={submitEdit}
         />
       ) : null}
-      {editing === null ? null : (
-        <TaskDialog
+      {editing === null || !board || !currentUser ? null : (
+        <TaskModal
+          boardId={board.id}
+          boardName={board.name}
+          currentUser={currentUser}
           task={editing}
           onClose={closeEdit}
           onRequestDelete={() => {
             setPendingDelete(editing);
             setEditing(null);
           }}
-          onSubmit={(values) => submitEdit(editing, values)}
+          onCreate={(values) => createMutation.mutateAsync(values)}
+          onSave={submitEdit}
         />
       )}
       {pendingDelete === null ? null : (

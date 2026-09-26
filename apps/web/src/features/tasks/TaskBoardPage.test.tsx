@@ -1,8 +1,9 @@
 import { http, HttpResponse } from "msw";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "@ksat/contracts";
-import { BOARD_ID, ada, buildBoard, buildTask } from "../../test/fixtures";
+import { BOARD_ID, ada, buildBoard, buildMember, buildTask } from "../../test/fixtures";
 import { Route, renderRoutes } from "../../test/renderWithProviders";
 import { server } from "../../test/server";
 import { TaskBoardPage } from "./TaskBoardPage";
@@ -20,6 +21,7 @@ vi.mock("../../features/auth/authClient", () => ({
 
 const BOARD_PATH = `/api/v1/boards/${BOARD_ID}`;
 const TASKS_PATH = `/api/v1/boards/${BOARD_ID}/tasks`;
+const MEMBERS_PATH = `/api/v1/boards/${BOARD_ID}/members`;
 const TASK_PATTERN = "/api/v1/tasks/:taskId";
 
 const notStarted = buildTask({ id: "01900000-0000-7000-8000-000000000401", sequence: 1 });
@@ -37,6 +39,7 @@ function useBoard(options: { tasks?: readonly Task[] } = {}) {
     http.get(TASKS_PATH, () =>
       HttpResponse.json({ items: options.tasks ?? [notStarted, completed], nextCursor: null }),
     ),
+    http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [buildMember()], nextCursor: null })),
   );
 }
 
@@ -47,7 +50,7 @@ function renderBoard() {
 }
 /** Resolves once the column exists, so scoped queries do not race the first load. */
 async function column(name: string): Promise<HTMLElement> {
-  const heading = await screen.findByRole("heading", { level: 2, name });
+  const heading = await screen.findByRole("heading", { level: 2, name, hidden: true });
   const region = heading.closest("section");
   if (region === null) throw new Error(`no column region for ${name}`);
   return region;
@@ -61,6 +64,12 @@ function taskButton(name: string): HTMLElement {
 async function openTask(name: string): Promise<HTMLElement> {
   fireEvent.click(taskButton(name));
   return screen.findByRole("dialog");
+}
+
+async function choosePill(dialog: HTMLElement, label: string, option: string): Promise<void> {
+  const user = userEvent.setup();
+  await user.click(within(dialog).getByRole("combobox", { name: label }));
+  await user.click(await screen.findByRole("option", { name: option }));
 }
 
 describe("TaskBoardPage", () => {
@@ -195,8 +204,8 @@ describe("TaskBoardPage", () => {
 
     const dialog = await openTask(notStarted.name);
     expect(within(dialog).getByLabelText("Task name")).toHaveValue(notStarted.name);
-    fireEvent.change(within(dialog).getByLabelText("Column"), { target: { value: "IN_PROGRESS" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save task" }));
+    await choosePill(dialog, "Status", "In Progress");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Save changes/ }));
 
     // The optimistic edit is visible before the request settles.
     expect(
@@ -218,6 +227,9 @@ describe("TaskBoardPage", () => {
       name: notStarted.name,
       status: "IN_PROGRESS",
       priority: "MEDIUM",
+      assigneeId: null,
+      reporterId: notStarted.reporter.id,
+      dueDate: null,
       version: 1,
     });
   });
@@ -244,8 +256,8 @@ describe("TaskBoardPage", () => {
     await within(await column("Not Started")).findByText(notStarted.name);
 
     const dialog = await openTask(notStarted.name);
-    fireEvent.change(within(dialog).getByLabelText("Column"), { target: { value: "COMPLETED" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Save task" }));
+    await choosePill(dialog, "Status", "Completed");
+    fireEvent.click(within(dialog).getByRole("button", { name: /Save changes/ }));
 
     expect(
       await within(dialog).findByText(/Someone else changed this task first/),

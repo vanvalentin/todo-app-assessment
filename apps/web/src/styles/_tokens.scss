@@ -77,4 +77,16 @@ $breakpoint-wide: 52rem;
   --column-width: 24.333rem;
   --column-min-width: 20rem;
   --column-min-height: 28.75rem;
+
+  /* Task modal tokens (Figma 1:1045, 1:479): status dots and the due-date badge. */
+  --color-status-dot-not-started: #a8a29e;
+  --color-status-dot-in-progress: #2f6fed;
+  --color-status-dot-completed: #10b981;
+  --color-due-upcoming-soft: #eff6ff;
+  --color-due-upcoming-ink: #2c5282;
+  --color-due-today-soft: #fef9e7;
+  --color-due-today-ink: #735b16;
+  --color-due-overdue-soft: #f8eae7;
+  --color-due-overdue-ink: #9b3f32;
+  --pill-height: 2.25rem;
 }

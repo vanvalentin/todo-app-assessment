@@ -1,6 +1,8 @@
 import type { Task, TaskPriority } from "@ksat/contracts";
+import { Avatar } from "../../components/Avatar/Avatar";
+import calendarIcon from "../../assets/tasks/calendar.svg";
 import statusCompleteIcon from "../../assets/tasks/status-complete.svg";
-import { PRIORITY_LABELS } from "./taskBoard";
+import { describeDueDate, PRIORITY_LABELS } from "./taskBoard";
 import styles from "./TaskCard.module.scss";
 
 interface TaskCardProps {
@@ -10,8 +12,10 @@ interface TaskCardProps {
   isDragging?: boolean;
   /** Briefly highlights the card that just moved to this column. */
   isNewlyMoved?: boolean;
-  /** Opens the task dialog. Omitted for the drag overlay copy. */
+  /** Opens the task modal. Omitted for the drag overlay copy. */
   onOpen?: ((task: Task) => void) | undefined;
+  /** Test-only clock override for the overdue/days-left badge. */
+  now?: Date;
 }
 
 const PRIORITY_CLASS: Record<TaskPriority, string> = {
@@ -20,12 +24,17 @@ const PRIORITY_CLASS: Record<TaskPriority, string> = {
   LOW: styles.priorityLow,
 };
 
+const DUE_TONE_CLASS = {
+  upcoming: styles.dueUpcoming,
+  today: styles.dueToday,
+  overdue: styles.dueOverdue,
+} as const;
+
 /**
- * A task card. Clicking anywhere on it opens the task dialog, where the name,
- * column, priority, and deletion are handled; dragging it moves it between
- * columns. Only name, status, priority, sequence, and creator are in scope for
- * this slice, so the prototype's assignee, due date, dependency, attachment,
- * tag, and recurrence rows are omitted rather than filled with placeholder data.
+ * A task card. Clicking anywhere on it opens the task modal, which owns every field;
+ * dragging it moves it between columns. Description, dependencies, attachments, tags,
+ * and recurrence are later-phase fields and stay absent rather than filled with
+ * placeholder data.
  */
 export function TaskCard({
   task,
@@ -33,9 +42,11 @@ export function TaskCard({
   isDragging = false,
   isNewlyMoved = false,
   onOpen,
+  now,
 }: TaskCardProps) {
   const titleId = `task-title-${task.id}`;
   const isCompleted = task.status === "COMPLETED";
+  const due = describeDueDate(task.dueDate, now);
   const className = [
     styles.card,
     isCompleted ? styles.cardCompleted : "",
@@ -81,6 +92,32 @@ export function TaskCard({
         <span className={styles.sequence}>#{task.sequence}</span>
         <span className={styles.creator}>{task.createdBy.name}</span>
       </p>
+      {task.assignee !== null || due !== null ? (
+        <div className={styles.footer}>
+          {task.assignee === null ? (
+            <span className={styles.unassigned}>Unassigned</span>
+          ) : (
+            <span className={styles.assignee}>
+              <Avatar
+                seed={task.assignee.avatarSeed}
+                name={task.assignee.name}
+                size={18}
+                decorative
+              />
+              <span className={styles.assigneeName}>{task.assignee.name}</span>
+            </span>
+          )}
+          {due === null ? null : (
+            <span className={`${styles.due} ${DUE_TONE_CLASS[due.tone]}`}>
+              <img src={calendarIcon} alt="" width={11} height={11} />
+              {due.label}
+              {due.tone === "overdue" ? (
+                <span className={styles.overdueLabel}> · Overdue</span>
+              ) : null}
+            </span>
+          )}
+        </div>
+      ) : null}
     </article>
   );
 }
