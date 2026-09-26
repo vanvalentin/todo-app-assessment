@@ -95,4 +95,9 @@ If the workspace is not scaffolded yet, create only the files needed by the curr
 - Do not modify unrelated files or revert user changes.
 - Do not commit generated build output, coverage, local object data, database volumes, or environment secrets.
 - Keep lockfile changes tied to intentional dependency changes.
+- Structure commits by area rather than by file or as a single blob: split a delivery into the coherent pieces a reviewer can read in order (shared contracts, each application layer, migrations/schema, tests, docs) and write each subject in the repository's `type(scope): summary` form.
+- Aim for a handful of commits per delivery phase. One repository-wide commit is too coarse and one commit per file or per edit is too granular: if two commits only make sense together, and neither compiles or tests on its own, they are one commit.
+- Put tests with the behaviour they cover, documentation with the change it describes, and dependency or lockfile updates with the commit that introduces the dependency.
+- Stage explicit paths so nothing unrelated rides along, keep the ignored `phase-notes/` directory local, and never stage secrets or generated artifacts.
+- Add a concise body when the subject cannot carry the scope, and keep one logical change per commit so a revert is meaningful.
 - Use concise commits if asked to commit; never force-push or perform destructive Git operations without explicit permission.
