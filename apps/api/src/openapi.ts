@@ -237,6 +237,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       401: { description: "Unauthenticated.", ...problem },
       403: { description: "Trusted origin required.", ...problem },
       404: { description: "Board is unknown or not a member.", ...problem },
+      422: { description: "Assignee or reporter is not an active board member.", ...problem },
       429: { description: "Task creation rate limit exceeded.", ...problem },
     },
   });
@@ -270,6 +271,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       403: { description: "Trusted origin required.", ...problem },
       404: { description: "Task is unknown or the caller is not a board member.", ...problem },
       409: { description: "Task version is stale.", ...problem },
+      422: { description: "Assignee or reporter is not an active board member.", ...problem },
       429: { description: "Task update rate limit exceeded.", ...problem },
     },
   });
@@ -295,7 +297,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       title: "Ksat application API",
       version: "0.1.0",
       description:
-        "Boards and membership API. Authentication routes are owned by Better Auth; see https://www.better-auth.com/docs for its route reference.",
+        "Boards, membership, and task API. Authentication routes are owned by Better Auth; see https://www.better-auth.com/docs for its route reference.",
     },
     servers: [{ url: "/" }],
   });

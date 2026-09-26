@@ -8,27 +8,39 @@ import type {
   TaskPageRequest,
   TaskRow,
   TasksRepository,
+  TaskWriteInput,
   UpdateTaskResult,
 } from "./tasks.types.js";
 
-const creatorPreview = { id: true, name: true, avatarSeed: true } as const;
-const withCreator = { createdBy: { select: creatorPreview } } as const;
+const personPreview = { id: true, name: true, avatarSeed: true } as const;
+const withPeople = {
+  createdBy: { select: personPreview },
+  assignee: { select: personPreview },
+  reporter: { select: personPreview },
+} as const;
 const WRITE_CONFLICT_RETRIES = 5;
 
-interface TaskWithCreator {
+interface TaskWithPeople {
   readonly id: string;
   readonly boardId: string;
   readonly sequence: number;
   readonly name: string;
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
+  readonly dueDate: Date | null;
   readonly version: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly createdBy: { readonly id: string; readonly name: string; readonly avatarSeed: string };
+  readonly assignee: {
+    readonly id: string;
+    readonly name: string;
+    readonly avatarSeed: string;
+  } | null;
+  readonly reporter: { readonly id: string; readonly name: string; readonly avatarSeed: string };
 }
 
-function toTaskRow(row: TaskWithCreator): TaskRow {
+function toTaskRow(row: TaskWithPeople): TaskRow {
   return {
     id: row.id,
     boardId: row.boardId,
@@ -36,11 +48,19 @@ function toTaskRow(row: TaskWithCreator): TaskRow {
     name: row.name,
     status: row.status,
     priority: row.priority,
+    assignee: row.assignee,
+    reporter: row.reporter,
+    dueDate: row.dueDate,
     createdBy: row.createdBy,
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+/** `YYYY-MM-DD` stored as a raw calendar date; parsed at UTC midnight so it round-trips exactly. */
+function dueDateToColumn(dueDate: string | null): Date | null {
+  return dueDate === null ? null : new Date(`${dueDate}T00:00:00.000Z`);
 }
 
 /** The candidate sort order is (createdAt, id), so the cursor is a strict "after" key. */
@@ -76,6 +96,26 @@ async function retryOnWriteConflict<T>(operation: () => Promise<T>): Promise<T> 
   }
 }
 
+/**
+ * Defense in depth against the same-transaction membership check racing a concurrent
+ * write: the composite foreign keys (task_assignee_board_membership_fkey,
+ * task_reporter_board_membership_fkey) are the real backstop, so a foreign-key
+ * violation on one of them is mapped to the same result the pre-check would have
+ * returned, never a raw 500.
+ */
+function membershipViolationKind(
+  error: unknown,
+): "ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | null {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2003") {
+    return null;
+  }
+  const meta = error.meta as { constraint?: unknown; field_name?: unknown } | undefined;
+  const constraint = String(meta?.constraint ?? meta?.field_name ?? "");
+  if (constraint.includes("assignee")) return "ASSIGNEE_NOT_MEMBER";
+  if (constraint.includes("reporter")) return "REPORTER_NOT_MEMBER";
+  return null;
+}
+
 export function createPrismaTasksRepository(prisma: PrismaClient): TasksRepository {
   async function existsForMember(taskId: string, userId: string): Promise<boolean> {
     const row = await prisma.task.findFirst({
@@ -83,6 +123,27 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       select: { id: true },
     });
     return row !== null;
+  }
+
+  /** Membership pre-checks inside the write transaction; NOT_FOUND/board id is the caller's job. */
+  async function checkPeopleMembership(
+    tx: Prisma.TransactionClient,
+    boardId: string,
+    input: TaskWriteInput,
+  ): Promise<"ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | null> {
+    if (input.assigneeId !== null) {
+      const assignee = await tx.boardMembership.findUnique({
+        where: { boardId_userId: { boardId, userId: input.assigneeId } },
+        select: { userId: true },
+      });
+      if (!assignee) return "ASSIGNEE_NOT_MEMBER";
+    }
+    const reporter = await tx.boardMembership.findUnique({
+      where: { boardId_userId: { boardId, userId: input.reporterId } },
+      select: { userId: true },
+    });
+    if (!reporter) return "REPORTER_NOT_MEMBER";
+    return null;
   }
 
   return {
@@ -105,7 +166,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: page.limit + 1,
-        include: withCreator,
+        include: withPeople,
       });
       const hasMore = rows.length > page.limit;
       const pageRows = hasMore ? rows.slice(0, page.limit) : rows;
@@ -120,6 +181,10 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             select: { userId: true },
           });
           if (!membership) return { kind: "NOT_FOUND" } as const;
+
+          const violation = await checkPeopleMembership(tx, boardId, input);
+          if (violation) return { kind: violation } as const;
+
           // The board row lock serializes concurrent creation at READ COMMITTED, so each
           // transaction reads the previous value and the sequence has no duplicates or gaps.
           const board = await tx.board.update({
@@ -127,19 +192,28 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             data: { nextTaskSequence: { increment: 1 } },
             select: { nextTaskSequence: true },
           });
-          const task = await tx.task.create({
-            data: {
-              id: generateUuid(),
-              boardId,
-              sequence: board.nextTaskSequence - 1,
-              name: input.name,
-              status: input.status,
-              priority: input.priority,
-              createdById: userId,
-            },
-            include: withCreator,
-          });
-          return { kind: "CREATED", task: toTaskRow(task) } as const;
+          try {
+            const task = await tx.task.create({
+              data: {
+                id: generateUuid(),
+                boardId,
+                sequence: board.nextTaskSequence - 1,
+                name: input.name,
+                status: input.status,
+                priority: input.priority,
+                assigneeId: input.assigneeId,
+                reporterId: input.reporterId,
+                dueDate: dueDateToColumn(input.dueDate),
+                createdById: userId,
+              },
+              include: withPeople,
+            });
+            return { kind: "CREATED", task: toTaskRow(task) } as const;
+          } catch (error) {
+            const kind = membershipViolationKind(error);
+            if (kind) return { kind } as const;
+            throw error;
+          }
         }),
       );
     },
@@ -147,34 +221,59 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     async getForMember(taskId, userId): Promise<TaskRow | null> {
       const row = await prisma.task.findFirst({
         where: { id: taskId, ...memberScope(userId) },
-        include: withCreator,
+        include: withPeople,
       });
       return row === null ? null : toTaskRow(row);
     },
 
     async updateForMember(taskId, userId, input): Promise<UpdateTaskResult> {
-      return retryOnWriteConflict(async () => {
-        const updated = await prisma.task.updateMany({
-          where: { id: taskId, version: input.version, ...memberScope(userId) },
-          data: {
-            name: input.name,
-            status: input.status,
-            priority: input.priority,
-            version: { increment: 1 },
-          },
-        });
-        if (updated.count === 1) {
-          const row = await prisma.task.findFirst({
+      return retryOnWriteConflict(() =>
+        prisma.$transaction(async (tx) => {
+          const existing = await tx.task.findFirst({
             where: { id: taskId, ...memberScope(userId) },
-            include: withCreator,
+            select: { boardId: true },
           });
-          if (row) return { kind: "UPDATED", task: toTaskRow(row) } as const;
-        }
-        // A zero-row write is either a stale version or a task the caller cannot see.
-        return (await existsForMember(taskId, userId))
-          ? ({ kind: "VERSION_CONFLICT" } as const)
-          : ({ kind: "NOT_FOUND" } as const);
-      });
+          if (!existing) return { kind: "NOT_FOUND" } as const;
+
+          const violation = await checkPeopleMembership(tx, existing.boardId, input);
+          if (violation) return { kind: violation } as const;
+
+          let updated: { count: number };
+          try {
+            updated = await tx.task.updateMany({
+              where: { id: taskId, version: input.version, ...memberScope(userId) },
+              data: {
+                name: input.name,
+                status: input.status,
+                priority: input.priority,
+                assigneeId: input.assigneeId,
+                reporterId: input.reporterId,
+                dueDate: dueDateToColumn(input.dueDate),
+                version: { increment: 1 },
+              },
+            });
+          } catch (error) {
+            const kind = membershipViolationKind(error);
+            if (kind) return { kind } as const;
+            throw error;
+          }
+          if (updated.count === 1) {
+            const row = await tx.task.findFirst({
+              where: { id: taskId, ...memberScope(userId) },
+              include: withPeople,
+            });
+            if (row) return { kind: "UPDATED", task: toTaskRow(row) } as const;
+          }
+          // A zero-row write is either a stale version or a task the caller cannot see.
+          const stillVisible = await tx.task.findFirst({
+            where: { id: taskId, ...memberScope(userId) },
+            select: { id: true },
+          });
+          return stillVisible
+            ? ({ kind: "VERSION_CONFLICT" } as const)
+            : ({ kind: "NOT_FOUND" } as const);
+        }),
+      );
     },
 
     async deleteForMember(taskId, userId, version): Promise<DeleteTaskResult> {

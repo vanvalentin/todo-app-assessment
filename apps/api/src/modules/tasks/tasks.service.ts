@@ -16,8 +16,9 @@ export interface TasksServiceDeps {
 
 /**
  * Task rules for the Kanban slice. Every active board member, including
- * CONTRIBUTOR, may manage tasks; only membership itself is required, and the
- * repository enforces it inside each query rather than trusting the caller.
+ * CONTRIBUTOR, may manage tasks and may set any active member as assignee or
+ * reporter; only membership itself is required, and the repository enforces it
+ * inside each transaction rather than trusting the caller.
  */
 export interface TasksService {
   listTasks(userId: string, boardId: string, query: TaskPageQuery): Promise<TaskListResponse>;
@@ -25,6 +26,11 @@ export interface TasksService {
   getTask(userId: string, taskId: string): Promise<Task>;
   updateTask(userId: string, taskId: string, input: UpdateTaskRequest): Promise<Task>;
   deleteTask(userId: string, taskId: string, version: number): Promise<void>;
+}
+
+/** A stored calendar date is UTC midnight; slicing its ISO string keeps it a plain date. */
+function formatDueDate(dueDate: Date | null): string | null {
+  return dueDate === null ? null : dueDate.toISOString().slice(0, 10);
 }
 
 function toTask(row: TaskRow): Task {
@@ -35,11 +41,10 @@ function toTask(row: TaskRow): Task {
     name: row.name,
     status: row.status,
     priority: row.priority,
-    createdBy: {
-      id: row.createdBy.id,
-      name: row.createdBy.name,
-      avatarSeed: row.createdBy.avatarSeed,
-    },
+    assignee: row.assignee,
+    reporter: row.reporter,
+    dueDate: formatDueDate(row.dueDate),
+    createdBy: row.createdBy,
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -56,6 +61,22 @@ function taskNotFound(): HttpError {
 
 function taskVersionConflict(): HttpError {
   return new HttpError(409, "TASK_VERSION_CONFLICT", "The task was changed by someone else.");
+}
+
+function assigneeNotMember(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_ASSIGNEE_NOT_MEMBER",
+    "The assignee must be an active member of this board.",
+  );
+}
+
+function reporterNotMember(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_REPORTER_NOT_MEMBER",
+    "The reporter must be an active member of this board.",
+  );
 }
 
 export function createTasksService({ repository }: TasksServiceDeps): TasksService {
@@ -83,8 +104,18 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
     },
 
     async createTask(userId, boardId, input): Promise<Task> {
-      const result = await repository.createForMember(boardId, userId, input);
+      const result = await repository.createForMember(boardId, userId, {
+        name: input.name,
+        status: input.status,
+        priority: input.priority,
+        assigneeId: input.assigneeId,
+        // Omitted defaults to the caller; any active member may be named instead.
+        reporterId: input.reporterId ?? userId,
+        dueDate: input.dueDate,
+      });
       if (result.kind === "NOT_FOUND") throw boardNotFound();
+      if (result.kind === "ASSIGNEE_NOT_MEMBER") throw assigneeNotMember();
+      if (result.kind === "REPORTER_NOT_MEMBER") throw reporterNotMember();
       return toTask(result.task);
     },
 
@@ -95,9 +126,19 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
     },
 
     async updateTask(userId, taskId, input): Promise<Task> {
-      const result = await repository.updateForMember(taskId, userId, input);
+      const result = await repository.updateForMember(taskId, userId, {
+        name: input.name,
+        status: input.status,
+        priority: input.priority,
+        assigneeId: input.assigneeId,
+        reporterId: input.reporterId,
+        dueDate: input.dueDate,
+        version: input.version,
+      });
       if (result.kind === "NOT_FOUND") throw taskNotFound();
       if (result.kind === "VERSION_CONFLICT") throw taskVersionConflict();
+      if (result.kind === "ASSIGNEE_NOT_MEMBER") throw assigneeNotMember();
+      if (result.kind === "REPORTER_NOT_MEMBER") throw reporterNotMember();
       return toTask(result.task);
     },
 

@@ -70,6 +70,9 @@ const task: Task = {
   name: "Curate photo prints",
   status: "NOT_STARTED",
   priority: "MEDIUM",
+  assignee: null,
+  reporter: { id: summary.ownerId, name: "Ada", avatarSeed: "seed" },
+  dueDate: null,
   createdBy: { id: summary.ownerId, name: "Ada", avatarSeed: "seed" },
   version: 1,
   createdAt: "2027-01-01T00:00:00.000Z",
@@ -508,9 +511,69 @@ describe("phase 4a task routes", () => {
     expect(response.status).toBe(201);
     expect(received).toEqual({
       boardId: summary.id,
-      input: { name: "New task", status: "NOT_STARTED", priority: "MEDIUM" },
+      input: {
+        name: "New task",
+        status: "NOT_STARTED",
+        priority: "MEDIUM",
+        assigneeId: null,
+        dueDate: null,
+      },
     });
     expect(response.body.name).toBe("New task");
+  });
+
+  it("creates a task with an explicit assignee, reporter, and due date", async () => {
+    let received: unknown;
+    const response = await request(
+      testApp(undefined, {
+        tasks: {
+          createTask: async (_userId, boardId, input) => {
+            received = { boardId, input };
+            return { ...task, name: input.name };
+          },
+        },
+      }),
+    )
+      .post(`/api/v1/boards/${summary.id}/tasks`)
+      .set("x-user", "user-1")
+      .set("Origin", "http://localhost:8080")
+      .send({
+        name: "New task",
+        assigneeId: "01900000-0000-7000-8000-000000000501",
+        reporterId: "01900000-0000-7000-8000-000000000502",
+        dueDate: "2027-04-18",
+      });
+    expect(response.status).toBe(201);
+    expect(received).toMatchObject({
+      boardId: summary.id,
+      input: {
+        assigneeId: "01900000-0000-7000-8000-000000000501",
+        reporterId: "01900000-0000-7000-8000-000000000502",
+        dueDate: "2027-04-18",
+      },
+    });
+  });
+
+  it("maps a non-member assignee or reporter to a 422 Problem", async () => {
+    const response = await request(
+      testApp(undefined, {
+        tasks: {
+          createTask: async () => {
+            throw new HttpError(
+              422,
+              "TASK_ASSIGNEE_NOT_MEMBER",
+              "The assignee must be an active member of this board.",
+            );
+          },
+        },
+      }),
+    )
+      .post(`/api/v1/boards/${summary.id}/tasks`)
+      .set("x-user", "user-1")
+      .set("Origin", "http://localhost:8080")
+      .send({ name: "New task", assigneeId: "01900000-0000-7000-8000-000000000999" });
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe("TASK_ASSIGNEE_NOT_MEMBER");
   });
 
   it("rejects an untrusted, anonymous, or invalid task creation", async () => {
@@ -549,11 +612,27 @@ describe("phase 4a task routes", () => {
       .patch(`/api/v1/tasks/${task.id}`)
       .set("x-user", "user-1")
       .set("Origin", "http://localhost:8080")
-      .send({ name: task.name, status: "IN_PROGRESS", priority: "HIGH", version: 1 });
+      .send({
+        name: task.name,
+        status: "IN_PROGRESS",
+        priority: "HIGH",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 1,
+      });
     expect(response.status).toBe(200);
     expect(received).toEqual({
       taskId: task.id,
-      input: { name: task.name, status: "IN_PROGRESS", priority: "HIGH", version: 1 },
+      input: {
+        name: task.name,
+        status: "IN_PROGRESS",
+        priority: "HIGH",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 1,
+      },
     });
     expect(response.body).toMatchObject({ status: "IN_PROGRESS", version: 2 });
 
@@ -573,7 +652,15 @@ describe("phase 4a task routes", () => {
       .patch(`/api/v1/tasks/${task.id}`)
       .set("x-user", "user-1")
       .set("Origin", "http://localhost:8080")
-      .send({ name: task.name, status: "COMPLETED", priority: "LOW", version: 1 });
+      .send({
+        name: task.name,
+        status: "COMPLETED",
+        priority: "LOW",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 1,
+      });
     expect(stale.status).toBe(409);
     expect(stale.body.code).toBe("TASK_VERSION_CONFLICT");
 
@@ -581,7 +668,15 @@ describe("phase 4a task routes", () => {
       .patch("/api/v1/tasks/not-a-uuid")
       .set("x-user", "user-1")
       .set("Origin", "http://localhost:8080")
-      .send({ name: task.name, status: "IN_PROGRESS", priority: "HIGH", version: 1 });
+      .send({
+        name: task.name,
+        status: "IN_PROGRESS",
+        priority: "HIGH",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 1,
+      });
     expect(malformed.status).toBe(400);
   });
 

@@ -83,6 +83,7 @@ describe("application OpenAPI", () => {
       "401",
       "403",
       "404",
+      "422",
       "429",
     ]);
     const taskPath = document.paths?.["/api/v1/tasks/{taskId}"];
@@ -94,6 +95,7 @@ describe("application OpenAPI", () => {
       "403",
       "404",
       "409",
+      "422",
       "429",
     ]);
     expect(Object.keys(taskPath?.delete?.responses ?? {}).sort()).toEqual([

@@ -15,6 +15,10 @@ import type {
 const BOARD_ID = "01900000-0000-7000-8000-000000000001";
 const USER_ID = "01900000-0000-7000-8000-000000000002";
 const TASK_ID = "01900000-0000-7000-8000-000000000003";
+const ASSIGNEE_ID = "01900000-0000-7000-8000-000000000005";
+
+const reporterPreview = { id: USER_ID, name: "Ada", avatarSeed: "seed" };
+const assigneePreview = { id: ASSIGNEE_ID, name: "Grace", avatarSeed: "grace-seed" };
 
 function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
   return {
@@ -24,6 +28,9 @@ function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
     name: "Curate photo prints",
     status: "NOT_STARTED" as TaskStatus,
     priority: "MEDIUM" as TaskPriority,
+    assignee: null,
+    reporter: reporterPreview,
+    dueDate: null,
     createdBy: { id: USER_ID, name: "Ada", avatarSeed: "seed" },
     version: 1,
     createdAt: new Date("2027-01-01T00:00:00.000Z"),
@@ -61,8 +68,17 @@ async function failureOf(operation: Promise<unknown>): Promise<HttpError> {
 }
 
 describe("tasks service", () => {
-  it("serializes a task and exposes only contract fields", async () => {
-    const service = createTasksService({ repository: repository() });
+  it("serializes a task and formats a stored due date as a calendar date", async () => {
+    const service = createTasksService({
+      repository: repository({
+        getForMember: vi.fn(async () =>
+          buildTask({
+            assignee: assigneePreview,
+            dueDate: new Date("2027-04-18T00:00:00.000Z"),
+          }),
+        ),
+      }),
+    });
     const task: Task = await service.getTask(USER_ID, TASK_ID);
     expect(task).toEqual({
       id: TASK_ID,
@@ -71,11 +87,21 @@ describe("tasks service", () => {
       name: "Curate photo prints",
       status: "NOT_STARTED",
       priority: "MEDIUM",
+      assignee: assigneePreview,
+      reporter: reporterPreview,
+      dueDate: "2027-04-18",
       createdBy: { id: USER_ID, name: "Ada", avatarSeed: "seed" },
       version: 1,
       createdAt: "2027-01-01T00:00:00.000Z",
       updatedAt: "2027-01-01T00:00:00.000Z",
     });
+  });
+
+  it("serializes a null assignee and null due date as null, not omitted", async () => {
+    const service = createTasksService({ repository: repository() });
+    const task = await service.getTask(USER_ID, TASK_ID);
+    expect(task.assignee).toBeNull();
+    expect(task.dueDate).toBeNull();
   });
 
   it("lists active tasks for a member and emits a cursor only when more remain", async () => {
@@ -141,6 +167,8 @@ describe("tasks service", () => {
         name: "New task",
         status: "IN_PROGRESS",
         priority: "HIGH",
+        assigneeId: null,
+        dueDate: null,
       }),
     );
     expect(failure).toMatchObject({ status: 404, code: "BOARD_NOT_FOUND" });
@@ -148,7 +176,66 @@ describe("tasks service", () => {
       name: "New task",
       status: "IN_PROGRESS",
       priority: "HIGH",
+      assigneeId: null,
+      reporterId: USER_ID,
+      dueDate: null,
     });
+  });
+
+  it("defaults the reporter to the caller, and any active member may name another reporter", async () => {
+    const createForMember = vi.fn(
+      async (): Promise<CreateTaskResult> => ({ kind: "CREATED", task: buildTask() }),
+    );
+    const service = createTasksService({ repository: repository({ createForMember }) });
+    await service.createTask(USER_ID, BOARD_ID, {
+      name: "Task",
+      status: "NOT_STARTED",
+      priority: "MEDIUM",
+      assigneeId: null,
+      reporterId: ASSIGNEE_ID,
+      dueDate: null,
+    });
+    expect(createForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      expect.objectContaining({ reporterId: ASSIGNEE_ID }),
+    );
+  });
+
+  it("maps a non-member assignee or reporter to a 422 on create and update", async () => {
+    const createForMember = vi.fn(
+      async (): Promise<CreateTaskResult> => ({ kind: "ASSIGNEE_NOT_MEMBER" }),
+    );
+    const createService = createTasksService({ repository: repository({ createForMember }) });
+    expect(
+      await failureOf(
+        createService.createTask(USER_ID, BOARD_ID, {
+          name: "Task",
+          status: "NOT_STARTED",
+          priority: "MEDIUM",
+          assigneeId: "01900000-0000-7000-8000-000000000999",
+          dueDate: null,
+        }),
+      ),
+    ).toMatchObject({ status: 422, code: "TASK_ASSIGNEE_NOT_MEMBER" });
+
+    const updateForMember = vi.fn(
+      async (): Promise<UpdateTaskResult> => ({ kind: "REPORTER_NOT_MEMBER" }),
+    );
+    const updateService = createTasksService({ repository: repository({ updateForMember }) });
+    expect(
+      await failureOf(
+        updateService.updateTask(USER_ID, TASK_ID, {
+          name: "Task",
+          status: "NOT_STARTED",
+          priority: "MEDIUM",
+          assigneeId: null,
+          reporterId: "01900000-0000-7000-8000-000000000999",
+          dueDate: null,
+          version: 1,
+        }),
+      ),
+    ).toMatchObject({ status: 422, code: "TASK_REPORTER_NOT_MEMBER" });
   });
 
   it("maps stale updates and deletes to a task version conflict", async () => {
@@ -161,6 +248,9 @@ describe("tasks service", () => {
       name: "Renamed",
       status: "COMPLETED" as const,
       priority: "LOW" as const,
+      assigneeId: null,
+      reporterId: USER_ID,
+      dueDate: null,
       version: 1,
     };
     expect(await failureOf(service.updateTask(USER_ID, TASK_ID, update))).toMatchObject({
@@ -190,6 +280,9 @@ describe("tasks service", () => {
           name: "Renamed",
           status: "IN_PROGRESS",
           priority: "LOW",
+          assigneeId: null,
+          reporterId: USER_ID,
+          dueDate: null,
           version: 1,
         }),
       ),
@@ -200,13 +293,18 @@ describe("tasks service", () => {
     });
   });
 
-  it("returns the updated task after a winning move", async () => {
+  it("returns the updated task after a winning move, including its people and date", async () => {
     const service = createTasksService({
       repository: repository({
         updateForMember: vi.fn(
           async (): Promise<UpdateTaskResult> => ({
             kind: "UPDATED",
-            task: buildTask({ status: "IN_PROGRESS", version: 2 }),
+            task: buildTask({
+              status: "IN_PROGRESS",
+              version: 2,
+              assignee: assigneePreview,
+              dueDate: new Date("2027-05-01T00:00:00.000Z"),
+            }),
           }),
         ),
       }),
@@ -215,9 +313,17 @@ describe("tasks service", () => {
       name: "Curate photo prints",
       status: "IN_PROGRESS",
       priority: "MEDIUM",
+      assigneeId: ASSIGNEE_ID,
+      reporterId: USER_ID,
+      dueDate: "2027-05-01",
       version: 1,
     });
-    expect(task).toMatchObject({ status: "IN_PROGRESS", version: 2 });
+    expect(task).toMatchObject({
+      status: "IN_PROGRESS",
+      version: 2,
+      assignee: assigneePreview,
+      dueDate: "2027-05-01",
+    });
   });
 
   it("resolves deletion without returning a body", async () => {

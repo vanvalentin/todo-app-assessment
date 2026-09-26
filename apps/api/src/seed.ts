@@ -86,6 +86,9 @@ export const demoTasks = [
     status: "NOT_STARTED",
     priority: "HIGH",
     creator: "ada@example.test",
+    assignee: "grace@example.test",
+    reporter: "ada@example.test",
+    dueDate: "2027-04-18",
   },
   {
     id: "01900000-0000-7000-8000-000000000702",
@@ -95,6 +98,9 @@ export const demoTasks = [
     status: "IN_PROGRESS",
     priority: "MEDIUM",
     creator: "grace@example.test",
+    assignee: "grace@example.test",
+    reporter: "grace@example.test",
+    dueDate: "2027-04-25",
   },
   {
     id: "01900000-0000-7000-8000-000000000703",
@@ -104,6 +110,9 @@ export const demoTasks = [
     status: "COMPLETED",
     priority: "LOW",
     creator: "linus@example.test",
+    assignee: null,
+    reporter: "linus@example.test",
+    dueDate: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000704",
@@ -113,6 +122,9 @@ export const demoTasks = [
     status: "ARCHIVED",
     priority: "LOW",
     creator: "ada@example.test",
+    assignee: null,
+    reporter: "ada@example.test",
+    dueDate: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000705",
@@ -122,6 +134,9 @@ export const demoTasks = [
     status: "IN_PROGRESS",
     priority: "HIGH",
     creator: "grace@example.test",
+    assignee: "ada@example.test",
+    reporter: "grace@example.test",
+    dueDate: "2027-05-02",
   },
   {
     id: "01900000-0000-7000-8000-000000000706",
@@ -131,6 +146,9 @@ export const demoTasks = [
     status: "NOT_STARTED",
     priority: "MEDIUM",
     creator: "ada@example.test",
+    assignee: "maya@example.test",
+    reporter: "ada@example.test",
+    dueDate: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000707",
@@ -140,6 +158,9 @@ export const demoTasks = [
     status: "COMPLETED",
     priority: "MEDIUM",
     creator: "maya@example.test",
+    assignee: "maya@example.test",
+    reporter: "maya@example.test",
+    dueDate: "2027-03-14",
   },
   {
     id: "01900000-0000-7000-8000-000000000708",
@@ -149,6 +170,9 @@ export const demoTasks = [
     status: "NOT_STARTED",
     priority: "LOW",
     creator: "maya@example.test",
+    assignee: null,
+    reporter: "maya@example.test",
+    dueDate: "2027-06-01",
   },
 ] as const;
 
@@ -199,6 +223,13 @@ export async function seed(): Promise<void> {
     for (const task of demoTasks) {
       const creatorId = userIds.get(task.creator);
       if (!creatorId) throw new Error(`Missing demo task creator: ${task.creator}`);
+      const reporterId = userIds.get(task.reporter);
+      if (!reporterId) throw new Error(`Missing demo task reporter: ${task.reporter}`);
+      const assigneeId = task.assignee === null ? null : (userIds.get(task.assignee) ?? null);
+      if (task.assignee !== null && assigneeId === null) {
+        throw new Error(`Missing demo task assignee: ${task.assignee}`);
+      }
+      const dueDate = task.dueDate === null ? null : new Date(`${task.dueDate}T00:00:00.000Z`);
       await prisma.task.upsert({
         where: { id: task.id },
         update: {
@@ -206,6 +237,9 @@ export async function seed(): Promise<void> {
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
+          reporterId,
+          assigneeId,
+          dueDate,
         },
         create: {
           id: task.id,
@@ -215,6 +249,9 @@ export async function seed(): Promise<void> {
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
+          reporterId,
+          assigneeId,
+          dueDate,
         },
       });
     }
