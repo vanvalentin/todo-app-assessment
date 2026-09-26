@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 2 (identity) is complete. Better Auth credential/session flows, the Prisma identity schema, Redis secondary storage, generated avatars, and the responsive auth UI are in place. Boards and membership are the next delivery phase.
+> **Project status:** delivery phase 4a (task board) is complete. The Kanban walking skeleton is in place: task creation, editing, movement, and deletion for name, status, and priority with optimistic concurrency, the Figma `1:128` board adapted responsively, the first Playwright journey, and GitHub Actions. Assignee/reporter, due dates, search/filter/sort/archive, descriptions, dependencies, and attachments remain in later phases.
 
 ## Product scope
 
@@ -28,7 +28,7 @@ A collaborative TODO board application designed from the supplied [Figma file](h
 
 ### Explicitly deferred
 
-The Figma file also contains controls for favorites, tags, projects, “My Tasks”, archive pages, roster export, audit logs, keyboard shortcuts, and sync indicators. These may be rendered to preserve the composition but do not need behavior in the first release. Board creation can initially use seed data; making the “Create Board” UI functional is a later slice.
+The Figma file also contains controls for favorites, tags, projects, “My Tasks”, archive pages, roster export, audit logs, keyboard shortcuts, and sync indicators. These may be rendered to preserve the composition but do not need behavior in the first release. Board creation is not deferred: any signed-in user can create a board and becomes its `ADMIN`, so a new account never lands on a dead end.
 
 Email invites are functional in local development through Mailpit; delivering public email is an environment/deployment concern. Real-time multi-user updates, comments, notifications, malware scanning, and external identity providers are also deferred.
 
@@ -164,13 +164,15 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
+The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Their raw SQL definitions in `apps/api/prisma/migrations/20270301000000_boards_and_membership/migration.sql` are the source of truth; the corresponding comments in `schema.prisma` prevent the omission from being mistaken for accidental drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
+
 ## Identity delivery (phase 2)
 
 Better Auth `1.7.5` is pinned with its Prisma adapter and mounted at `ALL /api/v1/auth/*`. The public `BETTER_AUTH_URL` is the origin only; Better Auth's `basePath` supplies `/api/v1/auth`. Its required User, Account, Session, and Verification models are in committed identity migrations, with a PostgreSQL `citext` email and required server-generated `avatarSeed`. All Better Auth IDs use the supported `advanced.database.generateId` hook with UUIDv7.
 
 Email/password signup and login use a minimum of 12 and maximum of 256 characters and explicit Argon2id parameters (19,456 KiB memory, two passes, one lane, 32-byte output). Auth tokens never enter browser storage. `avatarSeed` is a non-input field with a server-side random default, so client attempts to set it are rejected. The web client renders that seed with bundled DiceBear code and makes no avatar or font request to a third party.
 
-PostgreSQL is authoritative. Redis secondary storage uses namespaced `ksat:better-auth:*` keys and Better Auth-provided TTLs; DB-backed sessions and verification records stay enabled. Redis cache failures are treated as misses, never as valid authentication, while rate-limit counters fall back to bounded process memory during an interruption. The API trusts forwarded proxy headers only when `TRUST_PROXY=true`, uses HttpOnly SameSite=Lax cookies, and takes Secure-cookie behavior from the required production setting `BETTER_AUTH_SECURE_COOKIES`. Better Auth's trusted-origin/CSRF checks remain enabled.
+PostgreSQL is authoritative. Redis secondary storage uses namespaced `ksat:better-auth:*` keys and Better Auth-provided TTLs; DB-backed sessions and verification records stay enabled. Redis cache failures are treated as misses, never as valid authentication, while rate-limit counters fall back to a bounded, per-API-process memory map during an interruption. The API trusts exactly one forwarded proxy hop only when `TRUST_PROXY=true`; the Compose Nginx proxy overwrites `X-Forwarded-For` with the connected client address. Do not enable `TRUST_PROXY` for a directly exposed API. The API uses HttpOnly SameSite=Lax cookies and takes Secure-cookie behavior from the required production setting `BETTER_AUTH_SECURE_COOKIES`. Better Auth's trusted-origin/CSRF checks remain enabled.
 
 The React client restores the cookie session before rendering, supports signup/login/logout, validates forms with React Hook Form and Zod, and provides pending, validation, connection-error, auth-error, and signed-in states. The auth composition follows Figma frame `1:2`; prototype-only habitat, remember-workstation, and passcode-reset controls remain omitted because they are outside the MVP.
 
@@ -182,6 +184,136 @@ Operational rollout:
 4. Exercise Better Auth's pinned route reference through `/api/v1/auth/sign-up/email`, `/api/v1/auth/sign-in/email`, `/api/v1/auth/sign-out`, and `/api/v1/auth/get-session`.
 
 The standard `pnpm test` suite intentionally does not require PostgreSQL, Redis, or MinIO. It covers environment policy, Argon2id behavior, UUIDv7/avatar generation, Redis degradation, representative credential behavior, route mounting, React identity states, health/error behavior, and shutdown. The phase-2 validation also applies the migrations in Compose and smoke-tests signup, cookie-backed session retrieval, Argon2id persistence, generated avatar persistence, and logout against PostgreSQL and Redis.
+
+## Boards and membership delivery (phase 3)
+
+The phase-3 slice is complete end to end: board creation and editing, membership reads, email invitations and cancellation, and the React screens that drive them. Favourites, tags, role changes/removal, invitation resend, roster export, audit logs, copy-link controls, and the task board itself remain deferred; the UI renders those controls as inert or omits them rather than faking behaviour.
+
+### Endpoints and authorization
+
+| Method | Path | Authorization | Success |
+| --- | --- | --- | --- |
+| GET | `/api/v1/boards` | Signed-in user; only memberships are returned | 200, cursor page |
+| GET | `/api/v1/boards/:boardId` | Active board member | 200; non-members receive `404 BOARD_NOT_FOUND` |
+| GET | `/api/v1/boards/:boardId/members` | Active board member | 200, cursor page |
+| GET | `/api/v1/boards/:boardId/invitations` | Board manager or admin | 200, pending cursor page |
+| PATCH | `/api/v1/boards/:boardId` | `ADMIN` member; trusted origin and session required | 200, updated board detail; stale version is `409 BOARD_VERSION_CONFLICT` |
+| POST | `/api/v1/boards/:boardId/invitations` | Manager/admin; only admin may invite an admin | 201; token is email-only |
+| DELETE | `/api/v1/boards/:boardId/invitations/:invitationId` | Manager/admin; only admin may cancel an admin invite | 204; repeated cancellation is idempotent |
+| GET | `/api/v1/invitations/:token` | Public preview; token is hashed before lookup | 200 preview |
+| POST | `/api/v1/invitations/:token/accept` | Signed-in user whose email matches invite | 200; idempotent for an existing member |
+
+All application mutations require an `Origin` or `Referer` origin in `BETTER_AUTH_TRUSTED_ORIGINS`. Better Auth continues to own origin/CSRF handling for `/api/v1/auth/*`.
+
+| Role | Read board | Read members | List invitations | Invite/cancel contributor or manager | Invite/cancel admin | Edit board |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ADMIN` | Yes | Yes | Yes | Yes | Yes | Yes |
+| `MANAGER` | Yes | Yes | Yes | Yes | No | No |
+| `CONTRIBUTOR` | Yes | Yes | No | No | No | No |
+
+### Invitation flow and safety
+
+A request email is normalized to lowercase. A 32-byte base64url token is sent in the link `${APP_PUBLIC_URL}/invitations/<token>`; only its SHA-256 hash is persisted. Pending invites expire after `INVITATION_TTL_HOURS` (default 168 hours). Re-inviting the same board/email revokes the old pending row and creates the replacement in one serializable transaction. The partial unique PostgreSQL index prevents two pending rows.
+
+Cancellation sets `revokedAt` in a serializable transaction and is idempotent; cancellation and acceptance cannot both win. Managers may cancel contributor/manager invitations, while only admins may cancel admin invitations. Acceptance checks expiry, revocation, and email equality, then creates the membership and conditionally marks the invite accepted in one serializable transaction. Concurrent accepts cannot create duplicate memberships. SMTP delivery occurs after commit; a transport failure returns `emailDelivery: "FAILED"` while leaving the invite valid. The API never returns a plain invitation token.
+
+Stable errors include `UNAUTHENTICATED` (401), `VALIDATION_ERROR`/`INVALID_CURSOR` (400), `ORIGIN_NOT_ALLOWED`/`FORBIDDEN`/`BOARD_ADMIN_REQUIRED`/`INVITATION_EMAIL_MISMATCH` (403), `BOARD_NOT_FOUND`/`INVITATION_NOT_FOUND` (404), `ALREADY_MEMBER`/`INVITATION_CONFLICT`/`INVITATION_NOT_PENDING`/`INVITATION_REVOKE_CONFLICT`/`BOARD_VERSION_CONFLICT` (409), `INVITATION_EXPIRED`/`INVITATION_REVOKED`/`INVITATION_ALREADY_ACCEPTED` (410), and `RATE_LIMITED` (429). Validation problems may include an `errors` array of `{ path, message }` entries.
+
+### Cache, limits, and operations
+
+The first page of each user's board list is cached in Redis as `ksat:cache:v1:boards:user:<userId>:first-page` for 45 seconds. Membership acceptance invalidates every member's key; cache failures are misses and fall back to PostgreSQL. Invitation creation is limited to 10 requests per user per hour and cancellation to 30 requests per user per hour. Invitation lookup is limited to 60 requests per IP per minute, and acceptance to 30 requests per IP per minute. Counters use `ksat:rate-limit:*` keys; during Redis outages the fallback is bounded and best-effort per API process, so limits are multiplied across replicas until Redis recovers.
+
+OpenAPI 3.1 is generated from `packages/contracts` and served at `/api/docs/openapi.json`; local Swagger UI is at `/api/docs`. The document links to Better Auth's route reference rather than duplicating its framework-owned routes.
+
+### Seed and rollout
+
+Compose's `migrate` job applies all committed Prisma migrations and runs the seed only when `SEED_DEMO_DATA=true`. Compose defaults this flag to `false`; the checked-in root `.env.example` explicitly opts local Compose development into demo data. Production also refuses demo seeding unless `ALLOW_PRODUCTION_DEMO_SEED=true` is explicitly and deliberately set. The deterministic, non-production accounts are `ada@example.test`, `grace@example.test`, `linus@example.test`, and `maya@example.test`; the shared password is `ksat-demo-password-2027`. These credentials and `.test` addresses must never be used in production. Local Mailpit is available at `http://localhost:8025` and SMTP uses `mailpit:1025` inside Compose.
+
+New configuration includes `APP_PUBLIC_URL`, `INVITATION_TTL_HOURS`, `SEED_DEMO_DATA`, `ALLOW_PRODUCTION_DEMO_SEED`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, and `MAIL_FROM`. Set the public URL/trusted origins first, run `pnpm db:migrate`, then `pnpm db:seed` (or `docker compose up --build` locally).
+
+### Web client (phase 3)
+
+Routes are owned by `react-router` v7 with a session guard that resolves the Better Auth cookie session before protected content renders:
+
+| Route | Screen | Notes |
+| --- | --- | --- |
+| `/` | redirect | Forwards to `/boards`. |
+| `/login` | `AuthScreen` (Figma `1:2`) | `?mode=sign-in` preselects login; `?redirect=` returns the visitor to the requested same-origin path after sign-in. |
+| `/boards` | All boards (Figma `1:838`) | Loading skeleton, empty state that explains invitation-only joining, error with retry, cursor "Load more", per-board role chip, avatar preview, relative update time, Open Board link, and a settings link into membership. |
+| `/boards/:boardId` | Board overview | Name, description, your role, member count and preview, admin-only Edit board panel with version conflict recovery, link to Members, and an explicit note that the task board ships in the next phase (no placeholder tasks). |
+| `/boards/:boardId/members` | Board members (Figma `1:1531`) | Breadcrumb, cohort summary, roles & hierarchy guide, invite form (`ADMIN`/`MANAGER` only), roster with URL-parameter search and role filters, and pending invitations with a `SENT` state and confirmation-based cancellation for managers/admins. |
+| `/invitations/:token` | Invitation acceptance | Public preview of board, role, inviter, invited email, and expiry, with signed-out, email-mismatch, expired, revoked, accepted, not-found, rate-limited, and error states. |
+| `*` | Not found | Explicit 404 screen instead of a blank route. |
+
+Server state lives in TanStack Query (`src/lib/api/*`), forms in React Hook Form resolved against the shared Zod contracts, and linkable roster filters in the URL search parameters. A thin `fetch` client sends same-origin cookie requests, validates every response with `packages/contracts`, maps RFC 9457 Problem Details to a typed `ApiError` (including field errors), distinguishes network and contract failures, and forwards `AbortSignal` so stale search and navigation requests are cancelled. `VITE_API_BASE_URL` overrides the same-origin default; Vite proxies `/api` in development and Nginx does in the container image, so no CORS configuration is needed.
+
+Board summaries carry `ownerId` plus a bounded `memberPreview` but no owner name, so "updated by" resolves the owner from that preview (or from the signed-in user when they own the board) and omits the name rather than asserting one it cannot verify. Roster and pending-invitation pages request the maximum bounded page size (100) and offer "Load more" when the API returns a cursor.
+
+Board creation is functional from both `Create New Board` controls: signed-in users provide a name and optional description, become the new board’s `ADMIN`, and are routed to its overview. Remaining deferred prototype controls are rendered inert or omitted, never faked: `SYNCED` and `New Task` in the shell, `Export Roster`, favourites, tags, the row overflow menu, role selects and member removal, invitation resend, `Copy Invite Link`, the audit log, and default board permissions.
+
+Static Figma assets are committed verbatim under `apps/web/src/assets/boards/` and `apps/web/src/assets/members/` (for example `1-838/12237.svg` → `assets/boards/plus-white.svg` → Create New Board/New Task, and `1-1531/a3435.svg` → `assets/members/roster-search.svg` → roster search field). Prototype photography is not shipped: every avatar is rendered locally from the server-generated `avatarSeed` through the shared `Avatar` component using bundled DiceBear code, and `IdentityPanel` from phase 2 was replaced by the shell account menu.
+
+`pnpm dev` builds `@ksat/contracts` first through the workspace `predev`/`pretest`/`pretypecheck`/`prebuild` scripts, mirroring the API package, so the shared schemas always exist before the web client compiles or runs.
+
+## Task board delivery (phase 4a)
+
+Phase 4a is the first Kanban slice: a board screen with three active columns, task creation, editing, movement, and deletion for name, status, and priority, plus optimistic concurrency. The card deliberately renders only the data that exists today — name, status, priority, board sequence, and creator — because assignee, dates, dependencies, attachments, and recurrence arrive with later phases.
+
+### Routes
+
+| Route | Screen | Notes |
+| --- | --- | --- |
+| `/boards/:boardId` | Task board (Figma `1:128`) | Three columns (`NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`), stage pills, board-scoped **New Task**, click-to-edit cards, load-more for additional pages, and a labelled **Settings** button in the board header. |
+| `/boards/:boardId/settings` | Board overview (phase 3) | Board metadata, membership summary, and the admin edit panel moved here when the board route became the Kanban board. |
+| `/boards/:boardId/members` | Board members (Figma `1:1531`) | Unchanged. |
+
+Search, assignee/priority filters, sorting, and the archive toggle are rendered inert with an explanation, so the composition matches the frame without faking behaviour. `ARCHIVED` tasks are excluded from every board read until the archive slice.
+
+### Endpoints and authorization
+
+| Method | Path | Authorization | Success |
+| --- | --- | --- | --- |
+| GET | `/api/v1/boards/:boardId/tasks` | Active board member | 200, cursor page of active tasks |
+| POST | `/api/v1/boards/:boardId/tasks` | Active board member | 201 created task |
+| GET | `/api/v1/tasks/:taskId` | Active board member | 200 task detail |
+| PATCH | `/api/v1/tasks/:taskId` | Active board member | 200 updated task, including a status move |
+| DELETE | `/api/v1/tasks/:taskId?version=` | Active board member | 204 deleted |
+
+Every board role — including `CONTRIBUTOR` — may manage tasks; only active membership is required, and the repository constrains each query by membership rather than trusting a caller-supplied id. Unknown boards and unknown tasks are indistinguishable `404`s (`BOARD_NOT_FOUND`, `TASK_NOT_FOUND`). Mutations keep the trusted-origin check and per-user Redis rate limits (create 120/hour, update 600/hour, delete 120/hour).
+
+### Concurrency and sequences
+
+A task carries a human-friendly `sequence` that is unique per board. Creation locks the board row and increments `Board.nextTaskSequence` in the same transaction as the insert, so parallel creates cannot duplicate or skip a number. Updates and deletes are predicated on `id + version + membership`; a zero-row write is resolved as either `TASK_VERSION_CONFLICT` (409) or `TASK_NOT_FOUND` (404), and a stale client never overwrites a newer edit. Task-board data is not cached in Redis; PostgreSQL stays authoritative.
+
+### Web behaviour
+
+- Optimistic mutations: moving, editing, and deleting write into the TanStack Query cache immediately, restore the exact snapshot when the request fails, and always reconcile with the server afterwards. A `409` reloads the authoritative task and announces the conflict.
+- Two entry points: the board's own **New Task** control and the shell CTA, which is enabled whenever a board screen supplies a handler and stays disabled elsewhere. Focus returns to whichever control opened the dialog.
+- Card affordance: the card is one pointer target, so the whole block shows `cursor: pointer` and hovering tints only its border. The title keeps its type and is never underlined, and keyboard focus keeps the visible ring.
+- Card interaction: a single click anywhere on a card opens the task dialog, which owns the name, column, and priority and offers **Delete task** (confirmed in a second dialog). The frame's per-card overflow menu is deliberately not implemented; phase 4b replaces this interim dialog with the designed edit modal, and the request is recorded in the delivery plan.
+- Movement and its feedback: pointer dragging uses `@dnd-kit/core` with a distance threshold. The original card stays in its column, dimmed, as the place it left, and a drag overlay follows the pointer.
+- Live drop target: the column under the pointer is highlighted while a card is held — an accent wash, an accent border, and an inset ring, so the state is not carried by colour alone — and only that column is highlighted. An empty column's dashed placeholder joins the highlight, so the target reads as one surface.
+- No drop animation: the card genuinely relocates to another column, and animating the overlay back to the source looked like a snap-back. The card that landed is highlighted briefly instead.
+- No drag auto-scroll: `DndContext` runs with `autoScroll={false}`, so a card can be carried anywhere on screen — including outside the board — without the page or the column row scrolling underneath it. The trade-off is deliberate: on narrow screens the column row has to be scrolled to a column before dropping onto it.
+- The keyboard-equivalent path is opening the card and changing its **Column** field, which moves the task the same way.
+- Movement, edit, and delete results are reported in a success toast (`Moved “…” to In Progress.`, `Saved “…”.`, `Deleted “…”.`) instead of an inline paragraph. This is intentional feedback rather than placeholder copy: pointer and drag results are visual, so the same text tells keyboard and screen-reader users whether the change succeeded. The toast is portaled to the document body, so it never displaces the board or joins its scroll containers, and it keeps its `role=status`/`role=alert` regions mounted so assistive technology announces every message. Confirmations auto-dismiss after five seconds, pausing while the pointer or focus is inside; rejections stay until they are dismissed, and the dismiss target meets the 24px minimum target size.
+- Control strip: the search field, the three filter controls, the archive toggle, and the primary CTA share one `--control-height` token so the strip aligns.
+- Responsive columns: columns use the 389px design width, shrink to a 20rem minimum to share a narrower viewport, and the row scrolls horizontally below that so the page itself never scrolls sideways. Reduced-motion preferences disable the arrival highlight and the column transition.
+- Testing Library/MSW coverage covers loading, empty, error/retry, not-found, validation, delete confirmation, optimistic rollback, conflict recovery, click-to-edit focus return, and the toast lifecycle (persistent live regions, auto-dismiss, hover pause, dismissal); the control-height alignment, hover border, and pointer cursor are asserted in the browser journey.
+
+### Browser journeys and CI
+
+`e2e/` holds the Playwright journeys and `playwright.config.ts` targets `E2E_BASE_URL` (default `http://localhost:5173`). The first journey signs up a brand-new account with no seed data, creates a board, creates a task, moves it to `IN_PROGRESS`, reloads, and asserts the move persisted; it also measures page and column overflow at 1280px and 375px.
+
+`.github/workflows/ci.yml` runs three jobs with Node `24.12.0`, Corepack-pinned pnpm `11.18.0`, and dependency caching keyed from `pnpm-lock.yaml`:
+
+- **quality** — `pnpm format:check`, `lint`, `typecheck`, `test`, `build`, and `compose:config`;
+- **database** — Prisma client generation, `prisma migrate deploy`, the shadow-database migration-diff guard, and the PostgreSQL integration suite;
+- **browser** — Chromium installation, migrations, the API and web dev servers, the Playwright journeys, and failure-artifact upload.
+
+### Seed
+
+`pnpm db:seed` (and the Compose `migrate` job when `SEED_DEMO_DATA=true`) creates a deterministic task set across the demo boards, including one `ARCHIVED` row that demonstrates its exclusion from board reads. Each board's `nextTaskSequence` is set just past the seeded sequences so tasks created later never collide with them.
 
 ## API conventions
 
@@ -201,9 +333,13 @@ ALL    /api/v1/auth/*                   # Better Auth handler
        # email signup/sign-in, sign-out, session, and future OAuth callbacks
 
 GET    /boards
+POST   /boards
 GET    /boards/:boardId
+PATCH  /boards/:boardId             # admin board name/description edit with version
 GET    /boards/:boardId/members
+GET    /boards/:boardId/invitations
 POST   /boards/:boardId/invitations
+DELETE /boards/:boardId/invitations/:invitationId
 GET    /invitations/:token
 POST   /invitations/:token/accept
 
@@ -287,12 +423,24 @@ Copy `.env.example` to `.env` when overriding the safe local defaults, then run:
 docker compose up --build
 ```
 
+### Iterating on code without rebuilding images
+
+The `api` and `web` images bake built artifacts — `node dist/src/server.js` and the Vite bundle served by Nginx — so a source edit only reaches them through `docker compose build api web` (or `docker compose up -d --build`). That rebuild is the deployment check, not the inner loop. For day-to-day work, run the applications from source and keep the stateful services in Compose:
+
+```bash
+pnpm dev:infra   # postgres, redis, minio, mailpit; returns once they are healthy
+pnpm dev         # API on :3000 (tsx watch) and Vite on :5173 (HMR, /api proxy)
+```
+
+Both processes watch the source, so edits appear without any image build. `http://localhost:5173` behaves like `http://localhost:8080` for application requests because Vite proxies `/api` to the API, and the API trusts that origin locally. If the Compose `api`, `web`, and `worker` containers are already running, stop them first (`docker compose stop api web worker`) so only one process owns `:3000`, then start them again with `docker compose up -d` when you want the same code running inside the images.
+
 The one-shot `migrate` service applies committed Prisma migrations before the API and worker start. The committed migrations include the phase-1 baseline and the phase-2 Better Auth identity schema plus its reviewed 1.7.5 verification-timestamp upgrade. The identity schema enables `citext`, creates User/Account/Session/Verification with the pinned Better Auth columns and indexes, and adds the required Ksat `avatarSeed` field. Application models are added only in their owning slices. Docker images install from the committed lockfile and application containers run as non-root users.
 
-Phase-2 local endpoints:
+Local endpoints:
 
 - Identity application: `http://localhost:8080`
 - API liveness: `http://localhost:3000/health/live`
+- Application OpenAPI JSON: `http://localhost:8080/api/docs/openapi.json`
 - API readiness: `http://localhost:3000/health/ready`
 - Mailpit: `http://localhost:8025`
 - MinIO console: `http://localhost:9001`
@@ -306,7 +454,7 @@ Compose health checks and `depends_on: condition: service_healthy` will gate sta
 - **Unit:** domain rules, recurrence calculations, authorization decisions, validators, cache-key/invalidation logic, and React components.
 - **API integration:** Express app factory + Supertest against isolated PostgreSQL/Redis/MinIO test dependencies; test Better Auth credential/session flows and both allowed and forbidden application paths. Social-provider tests use mocked provider responses.
 - **Contract:** generated application OpenAPI snapshot, Better Auth route-reference availability, and representative request/response schemas.
-- **Browser:** Playwright journeys for signup/login, board listing, task CRUD/filter/archive, attachment upload, and member invitation acceptance.
+- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it (plus frame-width and narrow-width overflow checks); later slices add task filtering/archiving, attachments, and member invitation acceptance.
 - **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions.
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
@@ -321,7 +469,10 @@ pnpm install --frozen-lockfile
 pnpm dev                 # local API and Vite development servers
 # Copy apps/api/.env.example to apps/api/.env or export DATABASE_URL first:
 pnpm db:migrate          # apply committed Prisma migrations
+SHADOW_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/ksat_shadow pnpm --filter @ksat/api db:migrate:diff
 pnpm compose:config      # validate Compose configuration
+pnpm test:e2e:install    # download Chromium for the browser journeys
+pnpm test:e2e            # run the Playwright journeys against E2E_BASE_URL
 ```
 
 Every change should pass:
@@ -337,7 +488,7 @@ pnpm compose:config
 
 `pnpm check` runs that full sequence.
 
-A later GitHub Actions workflow will run those checks, start service containers for integration tests, run migrations, and build (but not publish) Docker images. Playwright can be a separate job after the core checks. Dependency caching must key from `pnpm-lock.yaml`.
+The GitHub Actions workflow adds the same sequence plus the shadow-database migration-diff guard, the PostgreSQL integration suite, and the Playwright journeys. Each later slice extends that suite with its own critical journey. Dependency caching is keyed from `pnpm-lock.yaml`.
 
 Coverage is used to find gaps, not as a substitute for behavior-based tests. Initial targets are 80% for domain/service modules and meaningful coverage for critical UI journeys.
 
@@ -345,14 +496,25 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 
 1. **Workspace foundation (complete)** — pnpm workspace, TypeScript, lint/format, environment validation, Compose dependencies, health endpoints.
 2. **Identity (complete)** — Better Auth/Prisma schema, Argon2id callbacks, signup/sign-in/sign-out/session flows, Redis secondary storage, generated DiceBear avatars, validated provider configuration, and the responsive auth UI.
-3. **Boards and membership** — board list/detail, seeded board, member list, invitations, Mailpit flow, authorization.
-4. **Task core** — CRUD, status/priority, assignee/reporter, due dates, search/filter/sort/archive, optimistic concurrency.
-5. **Task detail** — Markdown editor/rendering, dependencies with cycle checks, MinIO attachments.
+3. **Boards and membership (complete)** — board creation/list/detail, admin board editing, seeded demo board, member list, invitations, Mailpit flow, authorization, and the responsive web screens with invitation acceptance.
+4. **Kanban walking skeleton**
+   - **4a — Task board (complete):** task board page (`1:128`); create, edit, and delete tasks with name, status, and priority; move tasks between columns; optimistic concurrency. Also adds CI and the first Playwright journey: sign up → create board → create task → move it.
+   - **4b — People and dates:** assignee and reporter limited to board members, due dates, and the new/edit task modals (`1:1045`, `1:479`). The designed edit modal replaces the interim phase 4a dialog, so a single click on a card opens the full modal (with deletion) instead of the reduced name/column/priority dialog.
+   - **4c — Finding work:** search, filter, and sort in URL search parameters; archive and an explicit “show archived” toggle; cancellation of stale searches.
+5. **Task detail**
+   - **5a — Content and dependencies:** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
+   - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.
 6. **Recurring work** — RRULE editor, queue/worker generation, idempotency and timezone tests.
-7. **Design hardening** — responsive behavior, accessibility audit, Figma comparison, loading/empty/error states.
-8. **Delivery hardening** — full Compose path, OpenAPI review, Playwright, CI workflow, operational documentation.
+7. **Release hardening** — full accessibility audit, Figma comparison of every screen, OpenAPI review, operational documentation, and a complete end-to-end suite.
 
-Slices should stay vertically deployable: schema + contract + API + UI + tests in the same change where practical.
+After the MVP: role changes, member removal, invitation resend, roster export, favourites, tags, and audit logs.
+
+Every slice is complete only when:
+
+- the contract, API, UI, migration (when needed), and tests land in the same change, so no slice ships an unusable frontend or backend;
+- pending, empty, error, forbidden, keyboard, reduced-motion, and narrow-screen states are verified in that slice, not deferred to release hardening;
+- its critical user journey is covered by Playwright and CI passes `pnpm check` plus the migration-diff guard;
+- a brand-new account can reach and complete the new flow without seed data.
 
 ## Decision boundaries
 
