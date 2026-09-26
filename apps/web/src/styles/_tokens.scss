@@ -1,3 +1,6 @@
+// Breakpoints are Sass values because custom properties cannot be used in media queries.
+$breakpoint-narrow: 40rem;
+$breakpoint-medium: 56rem;
 $breakpoint-wide: 52rem;
 
 :root {
@@ -16,6 +19,7 @@ $breakpoint-wide: 52rem;
   --color-line-soft: #efece6;
   --color-error: #9b3f32;
   --color-error-soft: #f8eae7;
+  --color-error-line: #edd9d5;
   --color-accent: #315c4b;
   --color-accent-soft: #e7f0eb;
   --color-focus: #9c5c22;
@@ -31,4 +35,46 @@ $breakpoint-wide: 52rem;
   --space-6: 2rem;
   --space-7: 3rem;
   --content-width: 72rem;
+
+  /* Editorial tokens shared by the boards and membership screens (Figma 1:838, 1:1531). */
+  --color-ink-strong: #1b1c1a;
+  --color-muted-strong: #625e58;
+  --color-divider: #e5e0d8;
+  --color-surface-muted: #f4f1eb;
+  --color-dashed-surface: #f6f3ee;
+  --color-dashed-line: #d5d0c8;
+  --color-danger-ink: #7a3543;
+  --color-success-ink: #2d593e;
+  --color-success-soft: #ebf5ee;
+  --color-success-line: #d6ebd9;
+  --color-info-ink: #2c5282;
+  --color-info-soft: #eff6ff;
+  --color-info-line: #b9cbe4;
+  --color-warning-ink: #735b16;
+  --color-warning-soft: #fef9e7;
+  --color-warning-line: #f5e9bd;
+  --color-neutral-surface: #f1efea;
+  --color-neutral-line: #dcd7cf;
+  --space-8: 4rem;
+  --content-width-wide: 80rem;
+  --font-display: "Newsreader", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Space Mono", ui-monospace, monospace;
+  --header-height: 4rem;
+
+  /* Task board tokens (Figma 1:128). */
+  --color-column-surface: rgb(244 241 235 / 50%);
+  --color-column-line: rgb(26 25 24 / 8%);
+  --color-status-not-started: #a8a29e;
+  --color-status-in-progress: #fbbf24;
+  --color-status-completed: #10b981;
+  --color-stage-soft: #f4f1eb;
+  --color-stage-ink: #87827b;
+  --color-priority-high-soft: #fdecef;
+  --color-priority-high-ink: #7a3543;
+  --color-muted-card: #a9a49d;
+  --control-height: 2.5rem;
+  --column-width: 24.333rem;
+  --column-min-width: 20rem;
+  --column-min-height: 28.75rem;
 }

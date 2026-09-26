@@ -1,0 +1,92 @@
+// Above the dialogs (40): a confirmation can follow an action taken inside one.
+$toast-layer: 50;
+
+.region {
+  display: flex;
+  inset-block-end: var(--space-5);
+  inset-inline: 0;
+  justify-content: center;
+  padding-inline: var(--space-4);
+  // The empty region must never intercept pointer input.
+  pointer-events: none;
+  position: fixed;
+  z-index: $toast-layer;
+}
+
+.toast {
+  align-items: flex-start;
+  animation: toast-in 180ms ease-out;
+  background: var(--color-white);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-small);
+  box-shadow: var(--shadow-soft);
+  color: var(--color-ink);
+  display: flex;
+  font-size: 0.8125rem;
+  gap: var(--space-3);
+  inline-size: fit-content;
+  line-height: 1.4;
+  max-inline-size: 100%;
+  padding: 0.625rem var(--space-2) 0.625rem var(--space-3);
+  pointer-events: auto;
+
+  &[data-tone="success"] {
+    background: var(--color-success-soft);
+    border-color: var(--color-success-line);
+    color: var(--color-success-ink);
+  }
+
+  &[data-tone="error"] {
+    background: var(--color-error-soft);
+    border-color: var(--color-error-line);
+    color: var(--color-error);
+  }
+}
+
+.message {
+  margin: 0;
+}
+
+.dismiss {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--space-1);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  flex: none;
+  font-size: 1rem;
+  justify-content: center;
+  // Keeps the target at the 24px minimum (WCAG 2.5.8).
+  min-block-size: 1.5rem;
+  min-inline-size: 1.5rem;
+  padding: 0;
+
+  &:hover {
+    opacity: 0.7;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}

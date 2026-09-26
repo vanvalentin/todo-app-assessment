@@ -1,0 +1,39 @@
+.chip {
+  align-items: center;
+  border: 1px solid;
+  border-radius: var(--radius-small);
+  display: inline-flex;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  padding: 0.3125rem 0.6875rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.admin {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-line);
+  color: var(--color-warning-ink);
+}
+
+.manager {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-line);
+  color: var(--color-success-ink);
+}
+
+.contributor {
+  background: var(--color-info-soft);
+  border-color: var(--color-info-line);
+  color: var(--color-info-ink);
+}
+
+.visuallyHidden {
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}

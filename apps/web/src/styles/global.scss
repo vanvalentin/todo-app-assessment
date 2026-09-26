@@ -7,7 +7,7 @@
 html {
   background: var(--color-canvas);
   color: var(--color-ink);
-  font-family: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
   line-height: 1.5;
   text-rendering: optimizeLegibility;
 }
@@ -32,4 +32,17 @@ select {
 :focus-visible {
   outline: 0.1875rem solid var(--color-focus);
   outline-offset: 0.1875rem;
+}
+
+/* Available to assistive technology without affecting the editorial composition. */
+.visually-hidden {
+  border: 0;
+  clip-path: inset(50%);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }

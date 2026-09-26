@@ -1,0 +1,162 @@
+@use "../../styles/tokens" as tokens;
+
+.column {
+  // Scroll containers clip their own overflow, so every absolutely positioned
+  // descendant (the visually hidden count, the card menu) must anchor here.
+  position: relative;
+  background: var(--color-column-surface);
+  border: 1px solid var(--color-column-line);
+  border-radius: 1rem;
+  display: flex;
+  flex-direction: column;
+  // Fixed design width, but columns may shrink to share a narrow viewport down to
+  // a readable minimum; below that the columns row scrolls horizontally.
+  flex: 0 1 var(--column-width);
+  min-block-size: var(--column-min-height);
+  min-inline-size: var(--column-min-width);
+  padding: 0.8125rem;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+
+  /*
+   * Live drop target: while a card is held, the column under the pointer shows
+   * that the card will land there. The tint, the border, and the inset ring
+   * change together so the state is never carried by colour alone.
+   */
+  &[data-over="true"] {
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+  }
+}
+
+.header {
+  align-items: center;
+  background: var(--color-white);
+  border: 1px solid var(--color-line);
+  border-radius: 0.75rem;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+  margin-block-end: 0.75rem;
+  padding: 0.6875rem 0.8125rem;
+}
+
+.heading {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+.dot {
+  block-size: 0.5rem;
+  border-radius: 9999px;
+  flex: none;
+  inline-size: 0.5rem;
+}
+
+.toneNeutral {
+  background: var(--color-status-not-started);
+}
+
+.toneProgress {
+  background: var(--color-status-in-progress);
+}
+
+.toneComplete {
+  background: var(--color-status-completed);
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.5rem;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.count {
+  color: var(--color-stage-ink);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.stage {
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.05em;
+  line-height: 0.9375rem;
+  padding: 0.125rem 0.5rem;
+  text-transform: uppercase;
+}
+
+.stage.toneNeutral {
+  background: var(--color-stage-soft);
+  color: var(--color-stage-ink);
+}
+
+.stage.toneProgress {
+  background: var(--color-warning-soft);
+  color: var(--color-warning-ink);
+}
+
+.stage.toneComplete {
+  background: var(--color-success-soft);
+  color: var(--color-success-ink);
+}
+
+.cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cardItem {
+  display: flex;
+}
+
+.draggable {
+  cursor: grab;
+  touch-action: none;
+  inline-size: 100%;
+
+  &[aria-pressed="true"] {
+    cursor: grabbing;
+  }
+}
+
+.empty {
+  background: transparent;
+  border: 1px dashed var(--color-dashed-line);
+  border-radius: 0.75rem;
+  color: var(--color-stage-ink);
+  font-size: 0.75rem;
+  margin: 0;
+  padding: 1.5rem 1rem;
+  text-align: center;
+  transition:
+    background-color 140ms ease,
+    border-color 140ms ease;
+
+  /* The placeholder follows the column, so the target reads as one surface. */
+  .column[data-over="true"] & {
+    background: var(--color-white);
+    border-color: var(--color-accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .column,
+  .empty {
+    transition: none;
+  }
+}
