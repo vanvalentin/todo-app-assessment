@@ -37,10 +37,22 @@ export function card(page: Page, columnName: string, taskName: string) {
   return column(page, columnName).getByRole("heading", { level: 3, name: taskName });
 }
 
-export async function createTask(page: Page, name: string): Promise<void> {
+export async function createTask(
+  page: Page,
+  name: string,
+  options: { assigneeName?: string; dueDate?: string } = {},
+): Promise<void> {
   await page.getByRole("button", { name: "New Task" }).first().click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Task name").fill(name);
+  if (options.assigneeName) {
+    await dialog.getByRole("combobox", { name: "Assignee" }).click();
+    await page.getByRole("option", { name: options.assigneeName }).click();
+  }
+  if (options.dueDate) {
+    await dialog.getByRole("button", { name: "Due date" }).click();
+    await page.locator('input[type="date"]').fill(options.dueDate);
+  }
   await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toBeHidden();
 }

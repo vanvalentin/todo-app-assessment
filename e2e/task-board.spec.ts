@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { card, column, createBoard, createTask, signUp } from "./support";
 
-const SCREENSHOT_DIR = ".tmp/phase4a/screens";
+const SCREENSHOT_DIR = ".tmp/phase4b/screens";
 
 /** Presses a card and drags it clear of its column, leaving the button held. */
 async function grabCard(
@@ -32,10 +32,15 @@ test("signs up, creates a board and a task, then moves the task between columns"
   await page.setViewportSize({ width: 1280, height: 900 });
 
   const taskName = `Prepare launch checklist ${Date.now()}`;
+  const initialDueDate = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+  const editedDueDate = new Date(Date.now() + 45 * 24 * 60 * 60_000).toISOString().slice(0, 10);
   await signUp(page, "journey");
   await createBoard(page, `E2E Board ${Date.now()}`);
-  await createTask(page, taskName);
+  await createTask(page, taskName, { assigneeName: "E2E Runner (Admin)", dueDate: initialDueDate });
   await expect(card(page, "Not Started", taskName)).toBeVisible();
+  await expect(
+    card(page, "Not Started", taskName).locator("xpath=ancestor::article"),
+  ).toContainText("E2E Runner");
 
   // Hovering a card tints only its block border: the title keeps its type, no underline.
   const hoveredCard = card(page, "Not Started", taskName).locator("xpath=ancestor::article");
@@ -45,13 +50,15 @@ test("signs up, creates a board and a task, then moves the task between columns"
   await expect(hoveredCard).toHaveCSS("border-top-color", "rgb(214, 211, 209)");
   await expect(hoveredCard.locator("button")).toHaveCSS("text-decoration-line", "none");
 
-  // Cards carry no overflow menu; a single click opens the task dialog.
+  // Cards carry no overflow menu; a single click opens the full designed task modal.
   await expect(page.getByRole("button", { name: /^Task actions for/ })).toHaveCount(0);
   await card(page, "Not Started", taskName).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Task name")).toHaveValue(taskName);
-  await dialog.getByLabel("Column").selectOption("IN_PROGRESS");
-  await dialog.getByRole("button", { name: "Save task" }).click();
+  await expect(dialog.getByRole("combobox", { name: "Assignee" })).toContainText("E2E Runner");
+  await dialog.getByRole("combobox", { name: "Status" }).click();
+  await page.getByRole("option", { name: "In Progress" }).click();
+  await dialog.getByRole("button", { name: /Save changes/ }).click();
 
   await expect(page.getByText(`Moved “${taskName}” to In Progress.`)).toBeVisible();
   await page.screenshot({ path: `${SCREENSHOT_DIR}/board-toast.png` });
@@ -165,4 +172,30 @@ test("signs up, creates a board and a task, then moves the task between columns"
   expect(narrow.scrollerOverflow).toBeGreaterThan(0);
   await expect(card(page, "Completed", taskName)).toBeVisible();
   await page.screenshot({ path: `${SCREENSHOT_DIR}/board-375.png`, fullPage: true });
+
+  // Reopen the designed edit modal, change a people/date-era field, persist it,
+  // then delete from the same modal. This journey remains seed-independent.
+  await card(page, "Completed", taskName).click();
+  const editDialog = page.getByRole("dialog");
+  await editDialog.getByRole("combobox", { name: "Priority" }).click();
+  await page.getByRole("option", { name: "Low Priority" }).click();
+  await editDialog.getByRole("button", { name: "Due date" }).click();
+  await page.locator('input[type="date"]').fill(editedDueDate);
+  await editDialog.getByRole("button", { name: /Save changes/ }).click();
+  await expect(page.getByText(`Saved “${taskName}”.`)).toBeVisible();
+
+  await page.reload();
+  await card(page, "Completed", taskName).click();
+  const persistedDialog = page.getByRole("dialog");
+  await expect(persistedDialog.getByRole("combobox", { name: "Priority" })).toContainText(
+    "Low Priority",
+  );
+  await expect(persistedDialog.getByRole("button", { name: "Due date" })).not.toContainText(
+    "No due date",
+  );
+  await persistedDialog.getByRole("button", { name: "Delete task" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await confirm.getByRole("button", { name: "Delete task" }).click();
+  await expect(page.getByText(`Deleted “${taskName}”.`)).toBeVisible();
+  await expect(card(page, "Completed", taskName)).toHaveCount(0);
 });
