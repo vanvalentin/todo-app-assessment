@@ -6,7 +6,7 @@ import { createLogger } from "./logging.js";
 
 export async function startWorker(): Promise<void> {
   const environment = loadEnvironment();
-  const logger = createLogger(environment.LOG_LEVEL);
+  const logger = createLogger(environment.LOG_LEVEL, environment.NODE_ENV !== "production");
   const infrastructure = createInfrastructure(environment);
   logger.info("Worker is idle; no background jobs are configured in phase 2 identity");
 

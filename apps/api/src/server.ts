@@ -10,7 +10,7 @@ import { createGracefulShutdown } from "./shutdown.js";
 
 export async function startServer(): Promise<Server> {
   const environment = loadEnvironment();
-  const logger = createLogger(environment.LOG_LEVEL);
+  const logger = createLogger(environment.LOG_LEVEL, environment.NODE_ENV !== "production");
   const infrastructure = createInfrastructure(environment);
   let authHandler: ReturnType<typeof createBetterAuth>["handler"];
   try {

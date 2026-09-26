@@ -12,10 +12,22 @@ export function getRequestId(request: IncomingMessage): string {
     : randomUUID();
 }
 
-export function createLogger(level: string): Logger {
+export function createLogger(level: string, pretty = false): Logger {
   return pino({
     level,
     base: { service: "ksat-api" },
+    ...(pretty
+      ? {
+          transport: {
+            target: "pino-pretty",
+            options: {
+              colorize: true,
+              translateTime: "HH:MM:ss",
+              ignore: "pid,hostname",
+            },
+          },
+        }
+      : {}),
     redact: {
       paths: [
         "req.headers.authorization",
