@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isoTimestampSchema, userPreviewSchema, uuidSchema } from "./common.js";
+import { isoDateSchema, isoTimestampSchema, userPreviewSchema, uuidSchema } from "./common.js";
 import { paginatedResponseSchema } from "./pagination.js";
 
 /** Every persisted task state, including the archived state the board hides by default. */
@@ -19,9 +19,10 @@ const taskNameSchema = z.string().trim().min(1).max(TASK_NAME_MAX_LENGTH);
 const versionSchema = z.number().int().nonnegative();
 
 /**
- * A task as returned by the API. Assignee, reporter, due date, description,
- * dependencies, attachments, and schedules are later-phase fields and are
- * deliberately absent rather than returned as placeholder data.
+ * A task as returned by the API. Description, dependencies, attachments, and
+ * schedules are later-phase fields and are deliberately absent rather than
+ * returned as placeholder data. Assignee, reporter, and due date arrive in
+ * phase 4b.
  */
 export const taskSchema = z
   .object({
@@ -31,6 +32,12 @@ export const taskSchema = z
     name: z.string().min(1).max(TASK_NAME_MAX_LENGTH),
     status: taskStatusSchema,
     priority: taskPrioritySchema,
+    /** Optional: no board member is assigned by default. */
+    assignee: userPreviewSchema.nullable(),
+    /** Always set: defaults to the creator and can be reassigned to any active member. */
+    reporter: userPreviewSchema,
+    /** A calendar date, not a timestamp: overdue/days-left is computed from the viewer's local date. */
+    dueDate: isoDateSchema.nullable(),
     createdBy: userPreviewSchema,
     version: versionSchema,
     createdAt: isoTimestampSchema,
@@ -47,6 +54,11 @@ export const createTaskRequestSchema = z
     name: taskNameSchema,
     status: activeTaskStatusSchema.default("NOT_STARTED"),
     priority: taskPrioritySchema.default("MEDIUM"),
+    /** Any active board member id, or null to leave the task unassigned. */
+    assigneeId: uuidSchema.nullable().default(null),
+    /** Omitted defaults to the caller; any active board member may be named instead. */
+    reporterId: uuidSchema.optional(),
+    dueDate: isoDateSchema.nullable().default(null),
   })
   .strict();
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
@@ -58,6 +70,9 @@ export const updateTaskRequestSchema = z
     name: taskNameSchema,
     status: activeTaskStatusSchema,
     priority: taskPrioritySchema,
+    assigneeId: uuidSchema.nullable(),
+    reporterId: uuidSchema,
+    dueDate: isoDateSchema.nullable(),
     version: versionSchema,
   })
   .strict();
