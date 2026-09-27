@@ -1,0 +1,135 @@
+name: Teardown
+
+# Release environments are disposable: deleting the branch removes its
+# containers, database and bucket. The nightly run collects anything a missed
+# event left behind.
+on:
+  delete:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Release to destroy (empty prunes abandoned ones)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  NODE_VERSION: "24.12.0"
+
+jobs:
+  prepare:
+    name: Decide what to remove
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      releases: ${{ steps.decide.outputs.releases }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Decide what to remove
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.event.ref }}
+          REF_TYPE: ${{ github.event.ref_type }}
+          REQUESTED: ${{ inputs.release }}
+        run: |
+          set -euo pipefail
+          name=""
+          if [ "$EVENT" = "delete" ] && [ "$REF_TYPE" = "branch" ]; then
+            name="$(node apps/api/scripts/release-name.ts "$REF" || true)"
+          elif [ -n "$REQUESTED" ]; then
+            name="$REQUESTED"
+          fi
+
+          if [ -n "$name" ]; then
+            mode=destroy
+            releases="[\"$name\"]"
+          else
+            # Prune: keep every environment that still has a release branch.
+            mode=prune
+            mapfile -t live < <(
+              git ls-remote --heads origin 'refs/heads/release/*' \
+                | awk '{ print $2 }' \
+                | sed 's|refs/heads/||' \
+                | while read -r branch; do
+                    node apps/api/scripts/release-name.ts "$branch" || true
+                  done
+            )
+            releases="$(printf '%s\n' "${live[@]}" | jq -R . | jq -s .)"
+          fi
+
+          {
+            echo "mode=$mode"
+            echo "releases=$releases"
+          } >> "$GITHUB_OUTPUT"
+          echo "$mode: $releases"
+
+  teardown:
+    name: Remove release environments
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.mode != 'none' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PREVIEW_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read the preview host outputs
+        working-directory: infra/envs/preview
+        run: |
+          set -euo pipefail
+          terraform init -input=false -no-color
+          echo "INSTANCE_ID=$(terraform output -raw instance_id)" \
+            >> "$GITHUB_ENV"
+
+      - name: Destroy or prune
+        env:
+          MODE: ${{ needs.prepare.outputs.mode }}
+          KEEP: ${{ needs.prepare.outputs.releases }}
+        run: |
+          set -euo pipefail
+          mapfile -t releases < <(jq -r '.[]' <<< "$KEEP")
+          if [ "$MODE" = "destroy" ]; then
+            run="bash /opt/ksat/release.sh destroy ${releases[0]}"
+          else
+            echo "Keeping: ${releases[*]:-none}"
+            run="bash /opt/ksat/release.sh prune ${releases[*]:-}"
+          fi
+          command="set -euo pipefail
+          if [ ! -f /opt/ksat/release.sh ]; then
+            echo 'No preview bundle on the host yet; nothing to remove.'
+            exit 0
+          fi
+          $run"
+          node deploy/scripts/ssm-run.mjs "$INSTANCE_ID" "$command" 1800

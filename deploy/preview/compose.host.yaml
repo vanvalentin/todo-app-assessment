@@ -1,0 +1,69 @@
+# Shared services on the preview host, started on every deploy (idempotent).
+# Each release is its own Compose project (compose.release.yaml) that joins
+# these networks.
+name: preview-host
+
+services:
+  traefik:
+    image: traefik:v3.4.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=preview-edge
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:?}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - preview-edge
+    restart: unless-stopped
+
+  # One PostgreSQL server; every release owns a separate database and role.
+  postgres:
+    image: postgres:17.4-alpine
+    container_name: preview-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      preview-data:
+        aliases:
+          - preview-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # Catches invitation emails from every release; not exposed publicly.
+  mailpit:
+    image: axllent/mailpit:v1.21.8
+    networks:
+      preview-data:
+        aliases:
+          - preview-mailpit
+    restart: unless-stopped
+
+networks:
+  # Traefik <-> release web containers only, so `api` still resolves inside
+  # each release project.
+  preview-edge:
+    name: preview-edge
+  # Release api/worker/migrate <-> shared data services.
+  preview-data:
+    name: preview-data
+
+volumes:
+  letsencrypt:
+  postgres_data:

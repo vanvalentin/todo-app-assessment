@@ -1,0 +1,87 @@
+# One release environment on the shared preview host.
+# Rendered with: docker compose -p <release> -f compose.release.yaml up -d
+# Images come from ECR (the same SHA-tagged images promoted to production).
+name: ${RELEASE:?}
+
+x-api: &api
+  image: ${ECR_REGISTRY:?}/ksat-api:${IMAGE_TAG:?}
+  env_file:
+    - ${RELEASE_ENV_FILE:?}
+  networks:
+    - default
+    - preview-data
+  restart: unless-stopped
+
+services:
+  # Per-release Redis: tiny, and isolates sessions, rate limits and queues.
+  redis:
+    image: redis:7.4.2-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  migrate:
+    <<: *api
+    depends_on:
+      redis:
+        condition: service_healthy
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        ./node_modules/.bin/prisma migrate deploy --schema prisma/schema.prisma
+        && node dist/src/seed.js
+    restart: "no"
+
+  api:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "dist/src/server.js"]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/health/ready').then(
+          r => process.exit(r.ok ? 0 : 1)
+          ).catch(() => process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  worker:
+    <<: *api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: ["node", "dist/src/worker.js"]
+
+  web:
+    image: ${ECR_REGISTRY:?}/ksat-web:${IMAGE_TAG:?}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - default
+      - preview-edge
+    # List form: Compose interpolates values, not mapping keys.
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.${RELEASE}.rule=Host(`${RELEASE}.\
+        ${PREVIEW_DOMAIN:?}`)"
+      - traefik.http.routers.${RELEASE}.entrypoints=websecure
+      - traefik.http.routers.${RELEASE}.tls.certresolver=le
+      - traefik.http.services.${RELEASE}.loadbalancer.server.port=8080
+    restart: unless-stopped
+
+networks:
+  preview-edge:
+    external: true
+  preview-data:
+    external: true
