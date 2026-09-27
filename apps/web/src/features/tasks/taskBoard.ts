@@ -1,5 +1,6 @@
 import type {
   ActiveTaskStatus,
+  TaskBlockingFilter,
   Task,
   TaskDueFilter,
   TaskPriority,
@@ -145,6 +146,7 @@ export interface TaskBoardFilterState {
   readonly assignee?: string;
   readonly priority?: TaskPriority;
   readonly status?: ActiveTaskStatus;
+  readonly blocking?: TaskBlockingFilter;
   readonly includeArchived: boolean;
   readonly due?: TaskDueFilter;
   readonly today?: string;
@@ -165,6 +167,11 @@ export function matchesTaskFilters(task: Task, filters: TaskBoardFilterState): b
   if (!filters.includeArchived && task.status === "ARCHIVED") return false;
   if (filters.status !== undefined && task.status !== filters.status) return false;
   if (filters.priority !== undefined && task.priority !== filters.priority) return false;
+  const isBlocked = task.dependsOn.some(
+    (dependency) => dependency.status === "NOT_STARTED" || dependency.status === "IN_PROGRESS",
+  );
+  if (filters.blocking === "BLOCKED" && !isBlocked) return false;
+  if (filters.blocking === "UNBLOCKED" && isBlocked) return false;
   if (filters.assignee !== undefined) {
     if (filters.assignee === "none") {
       if (task.assignee !== null) return false;

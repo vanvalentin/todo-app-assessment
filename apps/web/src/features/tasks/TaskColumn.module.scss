@@ -129,8 +129,20 @@
   padding: 0;
 }
 
+.virtualCards {
+  display: block;
+  position: relative;
+  inline-size: 100%;
+}
+
 .cardItem {
   display: flex;
+}
+
+.virtualCardItem {
+  inset-inline: 0;
+  position: absolute;
+  top: 0;
 }
 
 .draggable {

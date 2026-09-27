@@ -106,6 +106,25 @@ describe("matchesTaskFilters", () => {
     expect(matchesTaskFilters(archived, { includeArchived: true })).toBe(true);
   });
 
+  it("filters blocked and unblocked tasks from prerequisite state", () => {
+    const blocked = buildTask({
+      dependsOn: [{ id: "dependency", sequence: 1, name: "Open work", status: "IN_PROGRESS" }],
+    });
+    const unblocked = buildTask({
+      dependsOn: [{ id: "dependency", sequence: 1, name: "Done work", status: "COMPLETED" }],
+    });
+    expect(matchesTaskFilters(blocked, { includeArchived: false, blocking: "BLOCKED" })).toBe(true);
+    expect(matchesTaskFilters(blocked, { includeArchived: false, blocking: "UNBLOCKED" })).toBe(
+      false,
+    );
+    expect(matchesTaskFilters(unblocked, { includeArchived: false, blocking: "UNBLOCKED" })).toBe(
+      true,
+    );
+    expect(matchesTaskFilters(unblocked, { includeArchived: false, blocking: "BLOCKED" })).toBe(
+      false,
+    );
+  });
+
   it("filters by status, priority, and assignee", () => {
     expect(matchesTaskFilters(task, { includeArchived: false, status: "IN_PROGRESS" })).toBe(true);
     expect(matchesTaskFilters(task, { includeArchived: false, status: "COMPLETED" })).toBe(false);

@@ -174,6 +174,9 @@ importers:
       "@tanstack/react-query":
         specifier: 5.103.2
         version: 5.103.2(react@19.1.0)
+      "@tanstack/react-virtual":
+        specifier: 3.13.12
+        version: 3.13.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       better-auth:
         specifier: 1.7.5
         version: 1.7.5(@prisma/client@6.7.0(prisma@6.7.0(supports-color@7.2.0)(typescript@5.8.3))(typescript@5.8.3))(prisma@6.7.0(supports-color@7.2.0)(typescript@5.8.3))(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(vitest@3.2.7(@types/debug@4.1.13)(@types/node@24.0.0)(jsdom@26.0.0(supports-color@7.2.0))(msw@2.15.0(@types/node@24.0.0)(typescript@5.8.3))(sass@1.86.3)(supports-color@7.2.0)(tsx@4.19.3)(yaml@2.9.1))
@@ -2965,6 +2968,21 @@ packages:
       }
     peerDependencies:
       react: ^18 || ^19
+
+  "@tanstack/react-virtual@3.13.12":
+    resolution:
+      {
+        integrity: sha512-Gd13QdxPSukP8ZrkbgS2RwoZseTTbQPLnQEn7HY/rqtM+8Zt95f7xKC7N0EsKs7aoz0WzZ+fditZux+F8EzYxA==,
+      }
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  "@tanstack/virtual-core@3.13.12":
+    resolution:
+      {
+        integrity: sha512-1YBOJfRHV4sXUmWsFSf5rQor4Ss82G8dQWLRbnk3GA4jeP8hQt1hxXh0tmflpC0dz3VgEv/1+qwPyLeWkQuPFA==,
+      }
 
   "@testing-library/dom@10.4.2":
     resolution:
@@ -8689,6 +8707,14 @@ snapshots:
     dependencies:
       "@tanstack/query-core": 5.103.2
       react: 19.1.0
+
+  "@tanstack/react-virtual@3.13.12(react-dom@19.1.0(react@19.1.0))(react@19.1.0)":
+    dependencies:
+      "@tanstack/virtual-core": 3.13.12
+      react: 19.1.0
+      react-dom: 19.1.0(react@19.1.0)
+
+  "@tanstack/virtual-core@3.13.12": {}
 
   "@testing-library/dom@10.4.2":
     dependencies:

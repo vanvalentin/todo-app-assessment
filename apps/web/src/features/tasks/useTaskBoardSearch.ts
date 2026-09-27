@@ -1,9 +1,11 @@
 import {
   activeTaskStatusSchema,
+  taskBlockingFilterSchema,
   taskDueFilterSchema,
   taskPrioritySchema,
   taskSortSchema,
   type ActiveTaskStatus,
+  type TaskBlockingFilter,
   type TaskDueFilter,
   type TaskPriority,
   type TaskSort,
@@ -31,6 +33,7 @@ export interface TaskBoardSearchState {
   readonly assignee: string;
   readonly priority: TaskPriority | "";
   readonly status: ActiveTaskStatus | "";
+  readonly blocking: TaskBlockingFilter | "";
   readonly due: TaskDueFilter | "";
   readonly sort: TaskSort;
   readonly includeArchived: boolean;
@@ -41,6 +44,7 @@ export interface TaskBoardSearchState {
   setAssignee(value: string): void;
   setPriority(value: TaskPriority | ""): void;
   setStatus(value: ActiveTaskStatus | ""): void;
+  setBlocking(value: TaskBlockingFilter | ""): void;
   setDue(value: TaskDueFilter | ""): void;
   setSort(value: TaskSort): void;
   toggleArchived(): void;
@@ -63,6 +67,8 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
   const priority = validated<TaskPriority>(taskPrioritySchema, searchParams.get("priority")) ?? "";
   const status =
     validated<ActiveTaskStatus>(activeTaskStatusSchema, searchParams.get("status")) ?? "";
+  const blocking =
+    validated<TaskBlockingFilter>(taskBlockingFilterSchema, searchParams.get("blocking")) ?? "";
   const due = validated<TaskDueFilter>(taskDueFilterSchema, searchParams.get("due")) ?? "";
   const sort = validated<TaskSort>(taskSortSchema, searchParams.get("sort")) ?? DEFAULT_SORT;
   const includeArchived = searchParams.get("archived") === "1";
@@ -123,6 +129,7 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
     ...(resolvedAssignee !== undefined ? { assignee: resolvedAssignee } : {}),
     ...(priority !== "" ? { priority } : {}),
     ...(status !== "" ? { status } : {}),
+    ...(blocking !== "" ? { blocking } : {}),
     includeArchived,
     ...(due !== "" ? { due, today: localToday() } : {}),
     sort,
@@ -133,6 +140,7 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
     assignee !== "" ||
     priority !== "" ||
     status !== "" ||
+    blocking !== "" ||
     due !== "" ||
     includeArchived ||
     sort !== DEFAULT_SORT;
@@ -142,6 +150,7 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
     assignee,
     priority,
     status,
+    blocking,
     due,
     sort,
     includeArchived,
@@ -151,6 +160,7 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
     setAssignee: (value) => updateParams({ assignee: value === "" ? null : value }, false),
     setPriority: (value) => updateParams({ priority: value === "" ? null : value }, false),
     setStatus: (value) => updateParams({ status: value === "" ? null : value }, false),
+    setBlocking: (value) => updateParams({ blocking: value === "" ? null : value }, false),
     setDue: (value) => updateParams({ due: value === "" ? null : value }, false),
     setSort: (value) => updateParams({ sort: value === DEFAULT_SORT ? null : value }, false),
     toggleArchived: () => updateParams({ archived: includeArchived ? null : "1" }, false),

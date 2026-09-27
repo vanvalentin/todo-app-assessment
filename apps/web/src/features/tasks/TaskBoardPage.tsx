@@ -11,6 +11,7 @@ import {
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   activeTaskStatusSchema,
+  taskBlockingFilterSchema,
   taskDueFilterSchema,
   taskPrioritySchema,
   taskSortSchema,
@@ -404,6 +405,22 @@ export function TaskBoardPage() {
                     { value: "NOT_STARTED", label: "Status: Not Started" },
                     { value: "IN_PROGRESS", label: "Status: In Progress" },
                     { value: "COMPLETED", label: "Status: Completed" },
+                  ]}
+                />
+                <FilterSelect
+                  label="Filter by blocking state"
+                  value={search.blocking}
+                  onChange={(value) => {
+                    if (value === "") search.setBlocking("");
+                    else {
+                      const parsed = taskBlockingFilterSchema.safeParse(value);
+                      if (parsed.success) search.setBlocking(parsed.data);
+                    }
+                  }}
+                  options={[
+                    { value: ALL_VALUE, label: "Blocking: All" },
+                    { value: "BLOCKED", label: "Blocking: Blocked" },
+                    { value: "UNBLOCKED", label: "Blocking: Unblocked" },
                   ]}
                 />
                 <FilterSelect

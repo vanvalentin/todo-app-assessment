@@ -51,6 +51,7 @@ function toFilterState(filters: TaskListFilterParams): TaskBoardFilterState {
     ...(filters.assignee !== undefined ? { assignee: filters.assignee } : {}),
     ...(filters.priority !== undefined ? { priority: filters.priority } : {}),
     ...(filters.status !== undefined ? { status: filters.status } : {}),
+    ...(filters.blocking !== undefined ? { blocking: filters.blocking } : {}),
     includeArchived: filters.includeArchived ?? false,
     ...(filters.due !== undefined ? { due: filters.due } : {}),
     ...(filters.today !== undefined ? { today: filters.today } : {}),

@@ -4,6 +4,7 @@ import {
   taskSchema,
   updateTaskRequestSchema,
   type ActiveTaskStatus,
+  type TaskBlockingFilter,
   type CreateTaskRequestInput,
   type TaskDueFilter,
   type TaskPriority,
@@ -25,6 +26,7 @@ export interface TaskListFilterParams {
   readonly assignee?: string;
   readonly priority?: TaskPriority;
   readonly status?: ActiveTaskStatus;
+  readonly blocking?: TaskBlockingFilter;
   readonly includeArchived?: boolean;
   readonly due?: TaskDueFilter;
   /** The viewer's local calendar day; required only alongside `due`. */
@@ -38,6 +40,7 @@ function taskListQuery(filters: TaskListFilterParams, cursor: string | null | un
   if (filters.assignee !== undefined) params.set("assignee", filters.assignee);
   if (filters.priority !== undefined) params.set("priority", filters.priority);
   if (filters.status !== undefined) params.set("status", filters.status);
+  if (filters.blocking !== undefined) params.set("blocking", filters.blocking);
   if (filters.includeArchived === true) params.set("includeArchived", "true");
   if (filters.due !== undefined) params.set("due", filters.due);
   if (filters.today !== undefined) params.set("today", filters.today);

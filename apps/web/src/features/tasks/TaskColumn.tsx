@@ -1,4 +1,5 @@
 import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useRef } from "react";
 import type { Task } from "@ksat/contracts";
 import { TaskCard } from "./TaskCard";
@@ -62,6 +63,14 @@ function DraggableCard({ task, isNewlyMoved, onOpen }: DraggableCardProps) {
 export function TaskColumn({ column, tasks, movedTaskId, onOpen }: TaskColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: column.status });
   const headingId = `column-heading-${column.status}`;
+  const virtualizer = useWindowVirtualizer({
+    count: tasks.length,
+    estimateSize: () => 150,
+    getItemKey: (index) => tasks[index]?.id ?? index,
+    gap: 12,
+    overscan: 6,
+    scrollToFn: () => undefined,
+  });
 
   return (
     <section
@@ -87,12 +96,25 @@ export function TaskColumn({ column, tasks, movedTaskId, onOpen }: TaskColumnPro
       <p className="visually-hidden">
         {tasks.length} {tasks.length === 1 ? "task" : "tasks"} loaded in {column.title}.
       </p>
-      <ul className={styles.cards}>
-        {tasks.map((task) => (
-          <li className={styles.cardItem} key={task.id}>
-            <DraggableCard task={task} isNewlyMoved={movedTaskId === task.id} onOpen={onOpen} />
-          </li>
-        ))}
+      <ul
+        className={`${styles.cards} ${styles.virtualCards}`}
+        style={{ blockSize: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const task = tasks[virtualItem.index];
+          if (task === undefined) return null;
+          return (
+            <li
+              className={`${styles.cardItem} ${styles.virtualCardItem}`}
+              data-index={virtualItem.index}
+              key={virtualItem.key}
+              ref={virtualizer.measureElement}
+              style={{ transform: `translateY(${virtualItem.start}px)` }}
+            >
+              <DraggableCard task={task} isNewlyMoved={movedTaskId === task.id} onOpen={onOpen} />
+            </li>
+          );
+        })}
       </ul>
       {tasks.length === 0 ? <p className={styles.empty}>No tasks in this column yet.</p> : null}
     </section>
