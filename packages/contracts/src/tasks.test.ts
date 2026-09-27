@@ -4,9 +4,12 @@ import {
   activeTaskStatusSchema,
   createTaskRequestSchema,
   deleteTaskQuerySchema,
+  taskDueFilterSchema,
+  taskListQuerySchema,
   taskListResponseSchema,
   taskPrioritySchema,
   taskSchema,
+  taskSortSchema,
   taskStatusSchema,
   updateTaskRequestSchema,
 } from "./tasks.js";
@@ -99,7 +102,7 @@ describe("task contracts", () => {
     );
   });
 
-  it("never lets a client create or move a task into ARCHIVED", () => {
+  it("never lets a client create a task directly into ARCHIVED, but an edit/move may archive or restore it", () => {
     expect(createTaskRequestSchema.safeParse({ name: "Task", status: "ARCHIVED" }).success).toBe(
       false,
     );
@@ -113,7 +116,18 @@ describe("task contracts", () => {
         dueDate: null,
         version: 1,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      updateTaskRequestSchema.safeParse({
+        name: "Task",
+        status: "IN_PROGRESS",
+        priority: "LOW",
+        assigneeId: null,
+        reporterId: reporter.id,
+        dueDate: null,
+        version: 2,
+      }).success,
+    ).toBe(true);
   });
 
   it("requires a version, reporter, assignee, and due date for updates", () => {
@@ -155,5 +169,57 @@ describe("task contracts", () => {
     const parsed = taskListResponseSchema.parse({ items: [validTask], nextCursor: "cursor" });
     expect(parsed.items).toHaveLength(1);
     expect(parsed.nextCursor).toBe("cursor");
+  });
+});
+
+describe("taskListQuerySchema", () => {
+  it("defaults sort to DUE_DATE and archive visibility to false", () => {
+    expect(taskListQuerySchema.parse({})).toMatchObject({
+      sort: "DUE_DATE",
+      includeArchived: false,
+    });
+  });
+
+  it("uses the documented sort and due-filter vocabulary", () => {
+    expect(taskSortSchema.options).toEqual(["DUE_DATE", "PRIORITY", "NEWEST", "OLDEST", "NAME"]);
+    expect(taskDueFilterSchema.options).toEqual(["OVERDUE", "TODAY", "NEXT_7_DAYS", "NONE"]);
+  });
+
+  it("trims search text and drops an empty term", () => {
+    expect(taskListQuerySchema.parse({ q: "  design  " })).toMatchObject({ q: "design" });
+    expect(taskListQuerySchema.parse({ q: "   " }).q).toBeUndefined();
+    expect(taskListQuerySchema.safeParse({ q: "x".repeat(101) }).success).toBe(false);
+  });
+
+  it("accepts an assignee id or the unassigned sentinel", () => {
+    expect(taskListQuerySchema.parse({ assignee: "none" })).toMatchObject({ assignee: "none" });
+    expect(
+      taskListQuerySchema.parse({ assignee: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f31" }),
+    ).toMatchObject({ assignee: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f31" });
+    expect(taskListQuerySchema.safeParse({ assignee: "not-a-uuid" }).success).toBe(false);
+  });
+
+  it("parses includeArchived from the string query value", () => {
+    expect(taskListQuerySchema.parse({ includeArchived: "true" }).includeArchived).toBe(true);
+    expect(taskListQuerySchema.parse({ includeArchived: "false" }).includeArchived).toBe(false);
+    expect(taskListQuerySchema.safeParse({ includeArchived: "yes" }).success).toBe(false);
+  });
+
+  it("requires today for a due bucket that depends on the viewer's local day, but not for NONE", () => {
+    expect(taskListQuerySchema.safeParse({ due: "OVERDUE" }).success).toBe(false);
+    expect(taskListQuerySchema.safeParse({ due: "TODAY" }).success).toBe(false);
+    expect(taskListQuerySchema.safeParse({ due: "NEXT_7_DAYS" }).success).toBe(false);
+    expect(taskListQuerySchema.safeParse({ due: "NONE" }).success).toBe(true);
+    expect(taskListQuerySchema.safeParse({ due: "OVERDUE", today: "2027-04-18" }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects today supplied without a due filter", () => {
+    expect(taskListQuerySchema.safeParse({ today: "2027-04-18" }).success).toBe(false);
+  });
+
+  it("rejects an unknown query key", () => {
+    expect(taskListQuerySchema.safeParse({ sort: "DUE_DATE", extra: "x" }).success).toBe(false);
   });
 });

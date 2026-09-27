@@ -1,17 +1,25 @@
 import { z } from "zod";
 import { isoDateSchema, isoTimestampSchema, userPreviewSchema, uuidSchema } from "./common.js";
-import { paginatedResponseSchema } from "./pagination.js";
+import { paginatedResponseSchema, paginationQuerySchema } from "./pagination.js";
 
 /** Every persisted task state, including the archived state the board hides by default. */
 export const taskStatusSchema = z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "ARCHIVED"]);
 export type TaskStatus = z.infer<typeof taskStatusSchema>;
 
-/** Statuses the task board can move between; ARCHIVED arrives with the archive slice. */
+/** Statuses a task can be created into or moved between via drag/the column pill; ARCHIVED is reached only through the archive action, never a plain move. */
 export const activeTaskStatusSchema = z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED"]);
 export type ActiveTaskStatus = z.infer<typeof activeTaskStatusSchema>;
 
 export const taskPrioritySchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type TaskPriority = z.infer<typeof taskPrioritySchema>;
+
+/** Board-list sort keys; DUE_DATE is the default (soonest first, no date last). */
+export const taskSortSchema = z.enum(["DUE_DATE", "PRIORITY", "NEWEST", "OLDEST", "NAME"]);
+export type TaskSort = z.infer<typeof taskSortSchema>;
+
+/** Due-date filter buckets. Resolved against the caller-supplied `today` because the viewer's local calendar day is authoritative, not the server's. */
+export const taskDueFilterSchema = z.enum(["OVERDUE", "TODAY", "NEXT_7_DAYS", "NONE"]);
+export type TaskDueFilter = z.infer<typeof taskDueFilterSchema>;
 
 export const TASK_NAME_MAX_LENGTH = 160;
 
@@ -64,11 +72,15 @@ export const createTaskRequestSchema = z
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type CreateTaskRequestInput = z.input<typeof createTaskRequestSchema>;
 
-/** Editing and moving share one contract: the full editable state plus its version. */
+/**
+ * Editing and moving share one contract: the full editable state plus its version.
+ * Status accepts every persisted value, including ARCHIVED, so the phase 4c archive
+ * action and drag-to-archive are one versioned PATCH like any other move.
+ */
 export const updateTaskRequestSchema = z
   .object({
     name: taskNameSchema,
-    status: activeTaskStatusSchema,
+    status: taskStatusSchema,
     priority: taskPrioritySchema,
     assigneeId: uuidSchema.nullable(),
     reporterId: uuidSchema,
@@ -83,3 +95,45 @@ export const deleteTaskQuerySchema = z
   .object({ version: z.coerce.number().int().nonnegative() })
   .strict();
 export type DeleteTaskQuery = z.infer<typeof deleteTaskQuerySchema>;
+
+const trimmedSearchSchema = z
+  .string()
+  .trim()
+  .max(100)
+  .optional()
+  .transform((value) => (value === undefined || value === "" ? undefined : value));
+
+/** An assignee filter names an active member id, or "none" for an unassigned task. */
+const assigneeFilterSchema = z.union([uuidSchema, z.literal("none")]);
+
+const booleanQuerySchema = z
+  .enum(["true", "false"])
+  .default("false")
+  .transform((value) => value === "true");
+
+/**
+ * The board-list query: search, filter, sort, and archive visibility all live here so
+ * the API and the URL-backed web state share one shape. `today` is the viewer's local
+ * calendar day, required only for the due-date buckets that depend on it.
+ */
+export const taskListQuerySchema = paginationQuerySchema
+  .extend({
+    q: trimmedSearchSchema,
+    assignee: assigneeFilterSchema.optional(),
+    priority: taskPrioritySchema.optional(),
+    status: activeTaskStatusSchema.optional(),
+    includeArchived: booleanQuerySchema,
+    due: taskDueFilterSchema.optional(),
+    today: isoDateSchema.optional(),
+    sort: taskSortSchema.default("DUE_DATE"),
+  })
+  .strict()
+  .refine((value) => value.due === undefined || value.due === "NONE" || value.today !== undefined, {
+    message: "today is required when filtering by OVERDUE, TODAY, or NEXT_7_DAYS",
+    path: ["today"],
+  })
+  .refine((value) => value.today === undefined || value.due !== undefined, {
+    message: "today must only be supplied together with due",
+    path: ["today"],
+  });
+export type TaskListQuery = z.infer<typeof taskListQuerySchema>;
