@@ -148,7 +148,9 @@ The rationale and trade-offs are in the decision log.
 │   └── config/                   # Shared TypeScript configuration
 ├── e2e/                          # Playwright journeys and accessibility checks
 ├── docker/                       # API/web Dockerfiles and Nginx config
-├── .github/workflows/ci.yml      # CI: quality, database, browser jobs
+├── deploy/                       # Preview-host Compose files and deploy scripts
+├── infra/                        # Terraform: shared platform, prod, preview host
+├── .github/workflows/            # CI, deploy, teardown, migration and infra jobs
 ├── compose.yaml                  # Local stack
 └── AGENTS.md                     # Rules for contributors and coding agents
 ```
@@ -217,6 +219,28 @@ pnpm check                                  # format, lint, typecheck, test, bui
 | End to end | Sign-up, boards, task lifecycle, filters, dependencies, recurrence, attachments, invitations and accessibility (axe). |
 
 CI (`.github/workflows/ci.yml`) runs the quality checks, database migrations and integration tests, and the Playwright journeys. The browser job builds and caches the pinned MinIO release from upstream source because its public image and binary downloads are unavailable. It verifies the attachment bucket, seeds the demo accounts used by the recurrence journey, and waits for API dependency readiness before testing. Startup logs are included in failure artifacts.
+
+## CI/CD
+
+Delivery is trunk based and runs in GitHub Actions, with AWS as the target.
+
+| Trigger | Result |
+| --- | --- |
+| Pull request | CI, a Terraform check for `infra/`, and a comment listing the migrations that merging runs on production |
+| Push to `release/*` | A release environment at `https://<release>.preview.example.com`, built from the pushed commit |
+| Push to `master`, after CI passes | Production: migrations, then a rolling ECS deploy that rolls back if the new version does not become healthy |
+
+Release environments are disposable: deleting the branch removes its containers,
+database and bucket, and a nightly job prunes the ones a missed event left behind.
+Migrations have to stay backward compatible, because the previous version is still
+serving traffic while they run.
+
+Production runs on ECS Fargate behind an application load balancer, with Aurora
+Serverless v2, ElastiCache and S3. Release environments share one small EC2 host
+that runs Docker Compose, so an extra branch costs almost nothing. Terraform
+describes both in [`infra/`](infra/); the pipelines are in
+[`.github/workflows/`](.github/workflows/). Nothing is deployed until the
+`AWS_DEPLOY_ENABLED` repository variable is set to `true`.
 
 ## AI-assisted development
 
