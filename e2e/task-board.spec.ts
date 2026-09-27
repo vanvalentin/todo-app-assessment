@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { card, column, createBoard, createTask, signUp } from "./support";
 
-const SCREENSHOT_DIR = ".tmp/phase4b/screens";
+const SCREENSHOT_DIR = ".tmp/phase5a/screens";
 
 /** Presses a card and drags it clear of its column, leaving the button held. */
 async function grabCard(
@@ -173,6 +173,56 @@ test("signs up, creates a board and a task, then moves the task between columns"
   await expect(card(page, "Completed", taskName)).toBeVisible();
   await page.screenshot({ path: `${SCREENSHOT_DIR}/board-375.png`, fullPage: true });
 
+  // Phase 5a: a Markdown description and a same-board dependency, then a rejected
+  // cycle in the opposite direction.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const prerequisiteName = `Book the venue ${Date.now()}`;
+  await createTask(page, prerequisiteName);
+  await card(page, "Completed", taskName).click();
+  const contentDialog = page.getByRole("dialog");
+  await contentDialog
+    .getByRole("textbox", { name: "Description" })
+    .fill("## Launch plan\n\n- **Confirm** the venue <b>raw</b>");
+  await contentDialog.getByRole("button", { name: "Add dependency" }).click();
+  await page.getByLabel("Search tasks on this board").fill("Book the venue");
+  await page.getByRole("checkbox", { name: new RegExp(prerequisiteName) }).check();
+  await page.keyboard.press("Escape");
+  await expect(
+    contentDialog.getByRole("button", { name: `Remove dependency #2 ${prerequisiteName}` }),
+  ).toBeVisible();
+  await page.screenshot({ path: `${SCREENSHOT_DIR}/task-modal-content-1280.png` });
+  await contentDialog.getByRole("button", { name: /Save changes/ }).click();
+  await expect(page.getByText(`Saved “${taskName}”.`)).toBeVisible();
+
+  await page.reload();
+  await expect(card(page, "Completed", taskName).locator("xpath=ancestor::article")).toContainText(
+    `Depends on: #2 ${prerequisiteName}`,
+  );
+
+  // The dependent cannot move to In Progress while its prerequisite is unfinished.
+  await grabCard(page, taskName, "Completed");
+  await dragOver(page, "In Progress");
+  await page.mouse.up();
+  await expect(
+    page.getByText(
+      "Complete all dependencies before moving this task to In Progress or Completed.",
+    ),
+  ).toBeVisible();
+  await expect(card(page, "Completed", taskName)).toBeVisible();
+  await expect(card(page, "In Progress", taskName)).toHaveCount(0);
+  await page.getByRole("button", { name: "Dismiss notification" }).click();
+
+  await card(page, "Not Started", prerequisiteName).click();
+  const cycleDialog = page.getByRole("dialog");
+  await cycleDialog.getByRole("button", { name: "Add dependency" }).click();
+  await page.getByLabel("Search tasks on this board").fill("Prepare launch");
+  await page.getByRole("checkbox", { name: new RegExp(taskName) }).check();
+  await page.keyboard.press("Escape");
+  await cycleDialog.getByRole("button", { name: /Save changes/ }).click();
+  await expect(cycleDialog.getByText(/would create a loop/).first()).toBeVisible();
+  await cycleDialog.getByRole("button", { name: "Discard changes" }).click();
+  await expect(cycleDialog).toBeHidden();
+
   // Reopen the designed edit modal, change a people/date-era field, persist it,
   // then delete from the same modal. This journey remains seed-independent.
   await card(page, "Completed", taskName).click();
@@ -193,6 +243,19 @@ test("signs up, creates a board and a task, then moves the task between columns"
   await expect(persistedDialog.getByRole("button", { name: "Due date" })).not.toContainText(
     "No due date",
   );
+  // The saved description renders as Markdown, and raw HTML is not rendered.
+  const preview = persistedDialog.getByRole("region", { name: "Description preview" });
+  await expect(preview.getByRole("heading", { name: "Launch plan" })).toBeVisible();
+  await expect(preview.locator("strong")).toHaveText("Confirm");
+  await expect(preview.locator("b")).toHaveCount(0);
+  await page.setViewportSize({ width: 375, height: 812 });
+  // Below 40rem the dialog becomes a full-screen sheet.
+  await expect.poll(async () => (await persistedDialog.boundingBox())?.width).toBe(375);
+  const sheetOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(sheetOverflow).toBeLessThanOrEqual(1);
+  await page.screenshot({ path: `${SCREENSHOT_DIR}/task-modal-content-375.png` });
   await persistedDialog.getByRole("button", { name: "Delete task" }).click();
   const confirm = page.getByRole("alertdialog");
   await confirm.getByRole("button", { name: "Delete task" }).click();
