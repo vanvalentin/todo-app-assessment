@@ -5,7 +5,7 @@ import { createBetterAuth } from "./auth/config.js";
 import { generateUuid } from "./auth/identity.js";
 import { loadEnvironment, type Environment } from "./config/env.js";
 
-const DEMO_PASSWORD = "ksat-demo-password-2027";
+export const DEMO_PASSWORD = "ksat-demo-password-2027";
 
 export function assertDemoSeedAllowed(
   environment: Pick<Environment, "NODE_ENV" | "SEED_DEMO_DATA" | "ALLOW_PRODUCTION_DEMO_SEED">,

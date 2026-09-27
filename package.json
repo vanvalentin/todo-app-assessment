@@ -17,6 +17,7 @@
     "build": "pnpm --recursive --if-present build",
     "db:migrate": "pnpm --filter @ksat/api db:migrate",
     "db:seed": "pnpm --filter @ksat/api db:seed:dev",
+    "db:seed:volume": "pnpm --filter @ksat/api db:seed:volume",
     "compose:config": "docker compose config --quiet",
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
