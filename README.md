@@ -216,7 +216,7 @@ pnpm check                                  # format, lint, typecheck, test, bui
 | Web | Loading, empty, error and retry states; form validation; optimistic updates and rollback; conflict recovery; keyboard interactions. |
 | End to end | Sign-up, boards, task lifecycle, filters, dependencies, recurrence, attachments, invitations and accessibility (axe). |
 
-CI (`.github/workflows/ci.yml`) runs the quality checks, database migrations and integration tests, and the Playwright journeys.
+CI (`.github/workflows/ci.yml`) runs the quality checks, database migrations and integration tests, and the Playwright journeys. The browser job builds and caches the pinned MinIO release from upstream source because its public image and binary downloads are unavailable. It verifies the attachment bucket, seeds the demo accounts used by the recurrence journey, and waits for API dependency readiness before testing. Startup logs are included in failure artifacts.
 
 ## AI-assisted development
 

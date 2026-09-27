@@ -186,30 +186,90 @@ jobs:
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
 
-      - name: Start MinIO and create the attachment bucket
-        env:
-          MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-          MC_IMAGE: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+      # Upstream images and binary archives are no longer public.
+      # Build RELEASE.2025-04-22T22-12-26Z from its pinned source commit.
+      - name: Cache the MinIO binary
+        id: minio-cache
+        uses: actions/cache@v4
+        with:
+          path: .tmp/minio-bin
+          key: >-
+            minio-Linux-X64-go1.24.2-0d7408fc9969caf07de6a8c3a84f9fbb10a6739e
+
+      - name: Check out the pinned MinIO source
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: minio/minio
+          ref: 0d7408fc9969caf07de6a8c3a84f9fbb10a6739e
+          path: .tmp/minio-source
+          persist-credentials: false
+
+      - name: Set up Go for MinIO
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.2"
+          cache-dependency-path: .tmp/minio-source/go.sum
+
+      - name: Build MinIO
+        if: steps.minio-cache.outputs.cache-hit != 'true'
+        working-directory: .tmp/minio-source
         run: |
-          docker run -d --name minio -p 9000:9000 -p 9001:9001 \
-            -e MINIO_ROOT_USER=minio -e MINIO_ROOT_PASSWORD=minio123 \
-            "$MINIO_IMAGE" server /data --console-address :9001
+          mkdir -p "$GITHUB_WORKSPACE/.tmp/minio-bin"
+          go build -trimpath -o "$GITHUB_WORKSPACE/.tmp/minio-bin/minio" .
+
+      - name: Start MinIO
+        env:
+          MINIO_ROOT_USER: minio
+          MINIO_ROOT_PASSWORD: minio123
+        run: |
+          nohup .tmp/minio-bin/minio server "$RUNNER_TEMP/minio-data" \
+            --address :9000 --console-address :9001 > minio.log 2>&1 &
           for attempt in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:9000/minio/health/live \
+            if curl -sf http://127.0.0.1:9000/minio/health/ready \
               > /dev/null; then
               echo "minio is ready"
-              break
+              exit 0
             fi
             sleep 1
           done
-          docker run --rm --network host \
-            -e MC_HOST_local=http://minio:minio123@127.0.0.1:9000 \
-            "$MC_IMAGE" mb --ignore-existing local/ksat
+          echo "minio did not become ready"
+          cat minio.log
+          exit 1
+
+      - name: Create and verify the attachment bucket
+        working-directory: apps/api
+        run: |
+          node --input-type=module <<'NODE'
+          import {
+            S3Client, CreateBucketCommand, HeadBucketCommand,
+          } from '@aws-sdk/client-s3';
+          const client = new S3Client({
+            endpoint: process.env.S3_ENDPOINT,
+            region: 'us-east-1',
+            forcePathStyle: true,
+            credentials: {
+              accessKeyId: process.env.S3_ACCESS_KEY_ID,
+              secretAccessKey: process.env.S3_SECRET_ACCESS_KEY,
+            },
+          });
+          try {
+            const input = { Bucket: process.env.S3_BUCKET };
+            await client.send(new CreateBucketCommand(input));
+            await client.send(new HeadBucketCommand(input));
+          } finally {
+            client.destroy();
+          }
+          NODE
 
       - name: Prepare the database
+        env:
+          SEED_DEMO_DATA: "true"
         run: |
           pnpm --filter @ksat/api db:generate
           pnpm --filter @ksat/api db:migrate
+          pnpm db:seed
 
       - name: Start the API
         run: nohup pnpm --filter @ksat/api dev > api.log 2>&1 &
@@ -220,7 +280,7 @@ jobs:
       - name: Wait for the application
         run: |
           for attempt in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:3000/health/live > /dev/null \
+            if curl -sf http://127.0.0.1:3000/health/ready > /dev/null \
               && curl -sf http://127.0.0.1:5173 > /dev/null; then
               echo "application is ready"
               exit 0
@@ -236,7 +296,14 @@ jobs:
 
       - name: Show server logs
         if: failure()
-        run: cat api.log web.log
+        run: |
+          for log in minio.log api.log web.log; do
+            if [ -f "$log" ]; then
+              echo "::group::$log"
+              cat "$log"
+              echo "::endgroup::"
+            fi
+          done
 
       - name: Upload failure artifacts
         if: failure()
@@ -246,4 +313,7 @@ jobs:
           path: |
             playwright-report
             test-results
+            minio.log
+            api.log
+            web.log
           retention-days: 7
