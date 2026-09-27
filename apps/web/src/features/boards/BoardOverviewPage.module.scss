@@ -183,18 +183,6 @@
   }
 }
 
-.panelDeferred {
-  background: transparent;
-  border: 1px solid var(--color-line-strong);
-  border-radius: var(--radius-small);
-  color: var(--color-muted);
-  cursor: not-allowed;
-  font-size: 0.8125rem;
-  min-height: 2.5rem;
-  opacity: 0.7;
-  padding: 0.625rem 1rem;
-}
-
 .statePanel {
   align-items: flex-start;
   background: var(--color-white);

@@ -42,7 +42,7 @@ describe("BoardsPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders each board with its role, owner, member preview and links", async () => {
+  it("opens a board and its member settings from the board card", async () => {
     server.use(
       http.get(BOARDS_PATH, () =>
         HttpResponse.json({
@@ -63,9 +63,6 @@ describe("BoardsPage", () => {
     expect(
       screen.getByRole("link", { name: "Members and access for Tokyo Zine Fair 2027" }),
     ).toHaveAttribute("href", `/boards/${BOARD_ID}/members`);
-    expect(screen.getByText(/Updated/)).toBeInTheDocument();
-    expect(screen.getByText("by Ada Lovelace")).toBeInTheDocument();
-    expect(screen.getByText("+2")).toBeInTheDocument();
     expect(screen.getAllByRole("link", { name: /Open Board/ })).toHaveLength(1);
   });
 

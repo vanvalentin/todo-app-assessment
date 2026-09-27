@@ -46,8 +46,6 @@ export function BoardsPage() {
   });
 
   const boards = boardsQuery.data?.pages.flatMap((page) => page.items) ?? [];
-  const currentUserId = session?.user.id ?? "";
-  const currentUserName = session?.user.name ?? null;
   const isEmpty = !boardsQuery.isPending && !boardsQuery.isError && boards.length === 0;
 
   return (
@@ -115,13 +113,7 @@ export function BoardsPage() {
           <ul className={styles.grid}>
             {boards.map((board) => (
               <li className={styles.gridItem} key={board.id}>
-                <BoardCard
-                  board={board}
-                  ownerName={
-                    board.memberPreview.find((member) => member.id === board.ownerId)?.name ??
-                    (board.ownerId === currentUserId ? currentUserName : null)
-                  }
-                />
+                <BoardCard board={board} />
               </li>
             ))}
             <li className={styles.gridItem}>

@@ -1,7 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
 import { Link, useParams } from "react-router";
-import exportIcon from "../../assets/members/export-roster.svg";
 import inviteMemberIcon from "../../assets/members/invite-member.svg";
 import { AppShell } from "../../components/AppShell/AppShell";
 import { RoleChip } from "../../components/RoleChip/RoleChip";
@@ -144,16 +143,6 @@ export function BoardMembersPage() {
               </div>
               {canManage ? (
                 <div className={styles.headerActions}>
-                  <button
-                    className={styles.deferredButton}
-                    type="button"
-                    disabled
-                    aria-label="Export roster — available in a later phase"
-                    title="Roster export arrives in a later phase."
-                  >
-                    <img src={exportIcon} alt="" width={10.667} height={10.667} />
-                    <span>Export Roster</span>
-                  </button>
                   <button
                     className={styles.primaryButton}
                     type="button"

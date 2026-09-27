@@ -402,9 +402,6 @@ export function RosterSection({
             : `Showing ${members.length} loaded active ${members.length === 1 ? "member" : "members"}`}
           {canManage ? ` and ${pendingSummary}` : ""}
         </p>
-        <p className={styles.footerNote}>
-          Role changes, member removal, and invitation resend arrive in a later phase.
-        </p>
       </footer>
     </section>
   );

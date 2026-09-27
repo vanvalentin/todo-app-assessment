@@ -354,15 +354,10 @@
   padding-block-start: var(--space-4);
 }
 
-.footerCount,
-.footerNote {
+.footerCount {
   color: var(--color-muted);
   font-size: 0.75rem;
   margin: 0;
-}
-
-.footerNote {
-  color: var(--color-subtle);
 }
 
 @media (max-width: 40rem) {

@@ -2,23 +2,15 @@ import type { BoardSummary } from "@ksat/contracts";
 import { Link } from "react-router";
 import arrowIcon from "../../assets/boards/open-board-arrow.svg";
 import settingsIcon from "../../assets/boards/board-settings.svg";
-import { Avatar } from "../../components/Avatar/Avatar";
 import { RoleChip } from "../../components/RoleChip/RoleChip";
-import { formatRelativeTime } from "../../lib/format";
 import styles from "./BoardCard.module.scss";
-
-const AVATAR_PREVIEW_LIMIT = 3;
 
 interface BoardCardProps {
   board: BoardSummary;
-  /** Resolved from the bounded member preview; null when the owner is not in it. */
-  ownerName: string | null;
 }
 
-export function BoardCard({ board, ownerName }: BoardCardProps) {
+export function BoardCard({ board }: BoardCardProps) {
   const titleId = `board-title-${board.id}`;
-  const preview = board.memberPreview.slice(0, AVATAR_PREVIEW_LIMIT);
-  const hiddenMembers = Math.max(board.memberCount - preview.length, 0);
 
   return (
     <article className={styles.card} aria-labelledby={titleId}>
@@ -43,25 +35,6 @@ export function BoardCard({ board, ownerName }: BoardCardProps) {
       <p className={styles.description}>
         {board.description ?? "No description has been added to this board yet."}
       </p>
-
-      <div className={styles.footer}>
-        <ul className={styles.avatars}>
-          {preview.map((member) => (
-            <li className={styles.avatarItem} key={member.id}>
-              <Avatar seed={member.avatarSeed} name={member.name} size={28} decorative />
-            </li>
-          ))}
-          {hiddenMembers > 0 ? (
-            <li className={styles.avatarOverflow} aria-hidden="true">
-              +{hiddenMembers}
-            </li>
-          ) : null}
-        </ul>
-        <p className={styles.updated}>
-          <span>Updated {formatRelativeTime(board.updatedAt)}</span>
-          {ownerName === null ? null : <span className={styles.owner}>by {ownerName}</span>}
-        </p>
-      </div>
 
       <Link className={styles.openLink} to={`/boards/${board.id}`}>
         Open Board

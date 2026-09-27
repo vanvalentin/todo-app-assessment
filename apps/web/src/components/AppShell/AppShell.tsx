@@ -38,42 +38,14 @@ export function AppShell({ children, onNewTask }: AppShellProps) {
                     Boards
                   </NavLink>
                 </li>
-                <li>
-                  <span className={styles.navLinkDisabled} aria-disabled="true">
-                    My Tasks
-                    <span className="visually-hidden"> — arrives in a later phase</span>
-                  </span>
-                </li>
-                <li>
-                  <span className={styles.navLinkDisabled} aria-disabled="true">
-                    Archive
-                    <span className="visually-hidden"> — arrives in a later phase</span>
-                  </span>
-                </li>
               </ul>
             </nav>
           </div>
 
           <div className={styles.headerControls}>
-            <span className={styles.syncPill} aria-hidden="true">
-              <span className={styles.syncDot} />
-              Synced
-            </span>
-            {onNewTask === undefined ? (
+            {onNewTask === undefined ? null : (
               <button
-                className={styles.deferredAction}
-                type="button"
-                disabled
-                aria-label="New Task — open a board to add tasks"
-                title="Open a board to add tasks."
-              >
-                <img src={plusIcon} alt="" width={9.333} height={9.333} />
-                <span>New Task</span>
-              </button>
-            ) : (
-              <button
-                className={styles.deferredAction}
-                data-enabled="true"
+                className={styles.newTaskAction}
                 type="button"
                 onClick={(event) => onNewTask(event.currentTarget)}
               >
