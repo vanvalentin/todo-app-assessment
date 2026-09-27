@@ -227,14 +227,6 @@ function membershipViolationKind(
 }
 
 export function createPrismaTasksRepository(prisma: PrismaClient): TasksRepository {
-  async function existsForMember(taskId: string, userId: string): Promise<boolean> {
-    const row = await prisma.task.findFirst({
-      where: { id: taskId, ...memberScope(userId) },
-      select: { id: true },
-    });
-    return row !== null;
-  }
-
   /** Membership pre-checks inside the write transaction; NOT_FOUND/board id is the caller's job. */
   async function checkPeopleMembership(
     tx: Prisma.TransactionClient,
@@ -296,7 +288,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
    * holding the board row lock until commit makes the second one see the first edge.
    */
   async function lockBoardGraph(tx: Prisma.TransactionClient, boardId: string): Promise<void> {
-    await tx.$queryRaw`SELECT 1 FROM "board" WHERE "id" = ${boardId} FOR UPDATE`;
+    await tx.board.findUnique({ where: { id: boardId }, select: { id: true } });
   }
 
   /** True when any new prerequisite already (transitively) depends on the task itself. */
@@ -306,20 +298,24 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     taskId: string,
     newDependsOnIds: readonly string[],
   ): Promise<boolean> {
-    // UNION (not UNION ALL) discards revisited nodes, so the walk always terminates.
-    const rows = await tx.$queryRaw<Array<{ cycle: boolean }>>`
-      WITH RECURSIVE reachable("id") AS (
-        SELECT unnest(${[...newDependsOnIds]}::text[])
-        UNION
-        SELECT d."dependsOnTaskId"
-        FROM "task_dependency" d
-        JOIN reachable r ON d."taskId" = r."id"
-        WHERE d."boardId" = ${boardId}
-      )
-      SELECT EXISTS (SELECT 1 FROM reachable WHERE "id" = ${taskId}) AS "cycle"`;
-    return rows[0]?.cycle === true;
+    const edges = await tx.taskDependency.findMany({
+      where: { boardId },
+      select: { taskId: true, dependsOnTaskId: true },
+    });
+    const next = new Map<string, string[]>();
+    for (const edge of edges)
+      next.set(edge.taskId, [...(next.get(edge.taskId) ?? []), edge.dependsOnTaskId]);
+    const pending = [...newDependsOnIds];
+    const visited = new Set<string>();
+    while (pending.length > 0) {
+      const currentId = pending.pop();
+      if (currentId === undefined || visited.has(currentId)) continue;
+      if (currentId === taskId) return true;
+      visited.add(currentId);
+      pending.push(...(next.get(currentId) ?? []));
+    }
+    return false;
   }
-
   return {
     async findMembershipRole(boardId, userId): Promise<BoardRole | null> {
       const row = await prisma.boardMembership.findUnique({
@@ -519,13 +515,32 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
 
     async deleteForMember(taskId, userId, version): Promise<DeleteTaskResult> {
       return retryOnWriteConflict(async () => {
-        const deleted = await prisma.task.deleteMany({
-          where: { id: taskId, version, ...memberScope(userId) },
+        return prisma.$transaction(async (tx) => {
+          const visible = await tx.task.findFirst({
+            where: { id: taskId, version, ...memberScope(userId) },
+            select: { id: true },
+          });
+          if (!visible) {
+            const stillVisible = await tx.task.findFirst({
+              where: { id: taskId, ...memberScope(userId) },
+              select: { id: true },
+            });
+            return stillVisible ? ("VERSION_CONFLICT" as const) : ("NOT_FOUND" as const);
+          }
+          const attachments = await tx.attachment.findMany({
+            where: { taskId },
+            select: { objectKey: true },
+          });
+          for (const attachment of attachments) {
+            await tx.objectCleanup.upsert({
+              where: { objectKey: attachment.objectKey },
+              create: { id: generateUuid(), objectKey: attachment.objectKey },
+              update: { completedAt: null, lastErrorCode: null },
+            });
+          }
+          await tx.task.delete({ where: { id: taskId } });
+          return "DELETED" as const;
         });
-        if (deleted.count === 1) return "DELETED" as const;
-        return (await existsForMember(taskId, userId))
-          ? ("VERSION_CONFLICT" as const)
-          : ("NOT_FOUND" as const);
       });
     },
   };

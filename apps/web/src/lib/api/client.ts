@@ -105,7 +105,8 @@ export async function apiRequest<T>(
   options: ApiRequestOptions = {},
 ): Promise<T> {
   const headers = new Headers({ Accept: "application/json" });
-  if (options.body !== undefined) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (options.body !== undefined && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -115,7 +116,9 @@ export async function apiRequest<T>(
       method: options.method ?? "GET",
       credentials: "same-origin",
       headers,
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(options.body === undefined
+        ? {}
+        : { body: isFormData ? options.body : JSON.stringify(options.body) }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
   } catch (error) {

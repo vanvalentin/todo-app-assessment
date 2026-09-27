@@ -17,6 +17,7 @@ import { createPrismaInvitationsRepository } from "./modules/invitations/invitat
 import { createInvitationsService } from "./modules/invitations/invitations.service.js";
 import { createPrismaTasksRepository } from "./modules/tasks/tasks.repository.js";
 import { createTasksService } from "./modules/tasks/tasks.service.js";
+import { createAttachmentsService } from "./modules/attachments/attachments.service.js";
 import { createRateLimiter } from "./lib/rateLimiter.js";
 import { createGracefulShutdown } from "./shutdown.js";
 
@@ -51,6 +52,13 @@ export async function startServer(): Promise<Server> {
   const tasks = createTasksService({
     repository: createPrismaTasksRepository(infrastructure.prisma),
   });
+  const attachments = createAttachmentsService({
+    prisma: infrastructure.prisma,
+    s3: infrastructure.s3,
+    bucket: environment.S3_BUCKET,
+    maxFileBytes: environment.ATTACHMENT_MAX_FILE_BYTES,
+    maxTaskBytes: environment.ATTACHMENT_MAX_TASK_BYTES,
+  });
   const app = createApp({
     logger,
     healthChecks: infrastructure.healthChecks,
@@ -63,6 +71,7 @@ export async function startServer(): Promise<Server> {
         boards,
         invitations,
         tasks,
+        attachments,
         resolveSession: createBetterAuthSessionResolver(auth.auth),
         rateLimiter: createRateLimiter(infrastructure.redis),
         trustedOrigins: environment.BETTER_AUTH_TRUSTED_ORIGINS,

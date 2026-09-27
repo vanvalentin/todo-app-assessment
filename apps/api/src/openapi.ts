@@ -28,6 +28,9 @@ import {
   taskReferenceSchema,
   taskSchema,
   updateTaskRequestSchema,
+  attachmentSchema,
+  attachmentListResponseSchema,
+  attachmentListQuerySchema,
 } from "@ksat/contracts";
 const json = (schema: z.ZodTypeAny) => ({ content: { "application/json": { schema } } });
 const problem = { content: { "application/problem+json": { schema: problemDetailsSchema } } };
@@ -56,6 +59,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register("TaskListResponse", taskListResponseSchema);
   registry.register("CreateTaskRequest", createTaskRequestSchema);
   registry.register("UpdateTaskRequest", updateTaskRequestSchema);
+  registry.register("Attachment", attachmentSchema);
+  registry.register("AttachmentListResponse", attachmentListResponseSchema);
   registry.registerComponent("securitySchemes", "cookieAuth", {
     type: "apiKey",
     in: "cookie",
@@ -308,6 +313,72 @@ export function buildOpenApiDocument(): OpenApiDocument {
       404: { description: "Task is unknown or the caller is not a board member.", ...problem },
       409: { description: "Task version is stale.", ...problem },
       429: { description: "Task deletion rate limit exceeded.", ...problem },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/tasks/{taskId}/attachments",
+    security: [{ cookieAuth: [] }],
+    request: { params: taskParamSchema, query: attachmentListQuerySchema },
+    responses: {
+      200: { description: "Task attachments.", ...json(attachmentListResponseSchema) },
+      401: { description: "Unauthenticated.", ...problem },
+      404: { description: "Task is unknown or inaccessible.", ...problem },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/v1/tasks/{taskId}/attachments",
+    security: [{ cookieAuth: [] }],
+    request: {
+      params: taskParamSchema,
+      body: {
+        required: true,
+        content: {
+          "multipart/form-data": {
+            schema: z.object({ file: z.string().openapi({ format: "binary" }) }).strict(),
+          },
+        },
+      },
+    },
+    responses: {
+      201: { description: "Uploaded attachment.", ...json(attachmentSchema) },
+      400: { description: "Missing file.", ...problem },
+      401: { description: "Unauthenticated.", ...problem },
+      404: { description: "Task is unknown or inaccessible.", ...problem },
+      413: { description: "Attachment size limit exceeded.", ...problem },
+      415: { description: "Unsupported file type.", ...problem },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/v1/tasks/{taskId}/attachments/{attachmentId}/content",
+    security: [{ cookieAuth: [] }],
+    request: {
+      params: z.object({ taskId: z.string().uuid(), attachmentId: z.string().uuid() }).strict(),
+    },
+    responses: {
+      200: {
+        description: "Private attachment bytes.",
+        content: {
+          "application/octet-stream": { schema: z.string().openapi({ format: "binary" }) },
+        },
+      },
+      401: { description: "Unauthenticated.", ...problem },
+      404: { description: "Attachment is unknown or inaccessible.", ...problem },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/v1/tasks/{taskId}/attachments/{attachmentId}",
+    security: [{ cookieAuth: [] }],
+    request: {
+      params: z.object({ taskId: z.string().uuid(), attachmentId: z.string().uuid() }).strict(),
+    },
+    responses: {
+      204: { description: "Attachment deleted." },
+      401: { description: "Unauthenticated.", ...problem },
+      404: { description: "Attachment is unknown or inaccessible.", ...problem },
     },
   });
   const generator = new OpenApiGeneratorV31(registry.definitions);

@@ -1,4 +1,5 @@
 import express, { type Express, type Request } from "express";
+import multer from "multer";
 import { z } from "zod";
 import {
   createBoardRequestSchema,
@@ -15,6 +16,10 @@ import type { TaskPageQuery } from "./modules/tasks/tasks.service.js";
 import type { BoardsService } from "./modules/boards/boards.service.js";
 import type { InvitationsService } from "./modules/invitations/invitations.service.js";
 import type { TasksService } from "./modules/tasks/tasks.service.js";
+import type {
+  AttachmentsService,
+  UploadedFile,
+} from "./modules/attachments/attachments.service.js";
 import { requireSession, type ResolveSession, type ResolvedSession } from "./auth/session.js";
 import { createOriginCheckMiddleware } from "./lib/originCheck.js";
 import type { RateLimiter } from "./lib/rateLimiter.js";
@@ -23,6 +28,7 @@ export interface ApiRouteDeps {
   readonly boards: BoardsService;
   readonly invitations: InvitationsService;
   readonly tasks: TasksService;
+  readonly attachments?: AttachmentsService;
   readonly resolveSession: ResolveSession;
   readonly rateLimiter: RateLimiter;
   readonly trustedOrigins: readonly string[];
@@ -239,6 +245,85 @@ export function configureApiRoutes(app: Express, deps: ApiRouteDeps): void {
     );
     response.status(201).json(await deps.tasks.createTask(session.user.id, boardId(request), body));
   });
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  });
+  const attachments = deps.attachments;
+  if (attachments) {
+    router.get("/tasks/:taskId/attachments", requireUser, async (request, response) => {
+      response
+        .status(200)
+        .json(
+          await attachments?.list(sessionOf(request).user.id, taskId(request), pagination(request)),
+        );
+    });
+    router.post(
+      "/tasks/:taskId/attachments",
+      unsafeOrigin,
+      requireUser,
+      upload.single("file"),
+      async (request, response) => {
+        const session = sessionOf(request);
+        await enforceRateLimit(
+          deps.rateLimiter,
+          `attachment:upload:${session.user.id}`,
+          120,
+          3_600,
+        );
+        if (!request.file)
+          throw new HttpError(400, "ATTACHMENT_REQUIRED", "Choose a file to upload.");
+        // SAFETY: multer guarantees a memory-storage file with the UploadedFile fields after the presence check.
+        const file: UploadedFile = request.file;
+        response
+          .status(201)
+          .json(await attachments?.upload(session.user.id, taskId(request), file));
+      },
+    );
+    router.get(
+      "/tasks/:taskId/attachments/:attachmentId/content",
+      requireUser,
+      async (request, response) => {
+        const content = await attachments?.content(
+          sessionOf(request).user.id,
+          taskId(request),
+          parseOrThrow(uuidSchema, request.params.attachmentId, "The attachment id is invalid."),
+        );
+        response.setHeader("Content-Type", content.metadata.mediaType);
+        response.setHeader("Content-Length", String(content.metadata.byteSize));
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        const disposition = content.metadata.mediaType.startsWith("image/")
+          ? "inline"
+          : "attachment";
+        response.setHeader(
+          "Content-Disposition",
+          `${disposition}; filename*=UTF-8''${encodeURIComponent(content.metadata.originalFilename)}`,
+        );
+        for await (const chunk of content.body) response.write(chunk);
+        response.end();
+      },
+    );
+    router.delete(
+      "/tasks/:taskId/attachments/:attachmentId",
+      unsafeOrigin,
+      requireUser,
+      async (request, response) => {
+        const session = sessionOf(request);
+        await enforceRateLimit(
+          deps.rateLimiter,
+          `attachment:delete:${session.user.id}`,
+          240,
+          3_600,
+        );
+        await attachments?.remove(
+          session.user.id,
+          taskId(request),
+          parseOrThrow(uuidSchema, request.params.attachmentId, "The attachment id is invalid."),
+        );
+        response.status(204).end();
+      },
+    );
+  }
   router.get("/tasks/:taskId", requireUser, async (request, response) => {
     response
       .status(200)

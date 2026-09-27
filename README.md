@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 5a (content and dependencies) is complete. Tasks now carry a sanitized Markdown description and same-board prerequisites with transactional cycle rejection, on top of 4c's URL-backed search, filters, sorting, and archive visibility. Attachments and recurrence remain in later phases.
+> **Project status:** delivery phase 5b (private task attachments) is in progress. Task attachments use authenticated API-mediated MinIO storage, PostgreSQL metadata, server-side type/size validation, and durable cleanup work. Recurrence remains in a later phase.
 
 ## Product scope
 
@@ -385,6 +385,22 @@ Only a newly added edge can close a cycle. When an update adds edges, the reposi
 
 Contract tests cover description normalization and limits and the dependency-id bounds. Service tests cover the self-dependency and 422 mappings. PostgreSQL integration tests cover ordered previews, cross-board and unknown ids, direct and transitive cycles, the concurrent opposite-edge race, stale-version preservation, cascade on delete, the raw CHECK constraints, gated `IN_PROGRESS` and `COMPLETED` moves, an archived prerequisite that settles without losing its edge, an unchanged status staying editable after a prerequisite drifts back, and a cycle winning over the status gate. Testing Library/MSW covers Markdown formatting controls, the Preview toggle, dependency guidance, sanitized rendering, incomplete-prerequisite and cycle-error recovery, and the archived state shown on a prerequisite chip. Playwright verifies a rejected pointer move rolls back with a visible error. The seed adds deterministic descriptions and two same-board edges.
 
+### Attachments delivery (phase 5b)
+
+Attachments are a private child resource of tasks. Active board members may list, upload, open/download, and remove files; unauthenticated callers receive `401`, and inaccessible tasks or attachment IDs are concealed as `404`. The API never returns object keys or MinIO URLs.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/v1/tasks/:taskId/attachments` | Cursor-paged attachment metadata |
+| POST | `/api/v1/tasks/:taskId/attachments` | Multipart upload using the `file` field |
+| GET | `/api/v1/tasks/:taskId/attachments/:attachmentId/content` | Authorized streamed content |
+| DELETE | `/api/v1/tasks/:taskId/attachments/:attachmentId` | Metadata removal and asynchronous object cleanup |
+
+The default limit is 10 MiB per file and 50 MiB per task, configurable through `ATTACHMENT_MAX_FILE_BYTES` and `ATTACHMENT_MAX_TASK_BYTES`. JPEG, PNG, GIF, WebP, PDF, and UTF-8 plain text are detected from content; browser-declared MIME types are not trusted. MinIO remains private and the API sets safe content-disposition and `nosniff` headers.
+
+The task modal follows `phase-notes/phase-5b-modals.png`: create mode stages files behind the compact Attach/upload action; edit mode shows **Attached specs & files**, usage against the 50 MiB cap, compact file tiles, and upload/open/remove controls. Attachments do not inflate board task cards.
+
+
 ## API conventions
 
 - Base path: `/api/v1`.
@@ -538,7 +554,7 @@ corepack enable
 pnpm install --frozen-lockfile
 pnpm dev                 # local API and Vite development servers
 # Copy apps/api/.env.example to apps/api/.env or export DATABASE_URL first:
-pnpm db:migrate          # apply committed Prisma migrations
+pnpm db:migrate          # apply committed Prisma migrations before starting the API
 SHADOW_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/ksat_shadow pnpm --filter @ksat/api db:migrate:diff
 pnpm compose:config      # validate Compose configuration
 pnpm test:e2e:install    # download Chromium for the browser journeys

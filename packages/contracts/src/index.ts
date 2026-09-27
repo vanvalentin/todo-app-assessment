@@ -5,3 +5,4 @@ export * from "./pagination.js";
 export * from "./boards.js";
 export * from "./invitations.js";
 export * from "./tasks.js";
+export * from "./attachments.js";

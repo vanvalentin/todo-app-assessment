@@ -25,10 +25,12 @@ import expandIcon from "../../assets/tasks/expand.svg";
 import trashIcon from "../../assets/tasks/trash.svg";
 import { ApiError } from "../../lib/api/client";
 import { fetchTask } from "../../lib/api/tasks";
+import { uploadTaskAttachment } from "../../lib/api/attachments";
 import type { TaskEditValues } from "./useTaskMutations";
 import { AssigneePill, DueDatePill, PriorityPill, ReporterPill, StatusPill } from "./PropertyPills";
 import { DependencyPicker } from "./DependencyPicker";
 import { DescriptionField } from "./DescriptionField";
+import { AttachmentField } from "./AttachmentField";
 import { dependencyErrorMessage, taskMutationErrorMessage } from "./taskBoard";
 import { useBoardMembers, withKnownPerson } from "./useBoardMembers";
 import styles from "./TaskModal.module.scss";
@@ -102,6 +104,7 @@ export function TaskModal({
   const [reporter, setReporter] = useState<UserPreview>(task?.reporter ?? currentUser);
   const [dueDate, setDueDate] = useState<string | null>(task?.dueDate ?? null);
   const [description, setDescription] = useState<string>(task?.description ?? "");
+  const [attachmentFiles, setAttachmentFiles] = useState<readonly File[]>([]);
   const [dependsOn, setDependsOn] = useState<readonly TaskReference[]>(task?.dependsOn ?? []);
   const [dependencyError, setDependencyError] = useState<string | null>(null);
   // Remounts the description editor on reload so it re-derives its initial tab.
@@ -183,7 +186,7 @@ export function TaskModal({
       } else {
         // The create modal's status pill never offers ARCHIVED, so this is a
         // runtime-checked narrowing rather than a cast, matching the create contract.
-        await onCreate({
+        const created = await onCreate({
           name: values.name,
           status: activeTaskStatusSchema.parse(effectiveStatus),
           priority,
@@ -193,10 +196,20 @@ export function TaskModal({
           description: descriptionValue,
           dependsOnIds: dependsOn.map((reference) => reference.id),
         });
+        if (
+          attachmentFiles.length > 0 &&
+          typeof created === "object" &&
+          created !== null &&
+          "id" in created &&
+          typeof created.id === "string"
+        ) {
+          for (const file of attachmentFiles) await uploadTaskAttachment(created.id, file);
+        }
         if (createMore) {
           // Create more keeps the shared properties but not per-task content.
           form.reset({ name: "" });
           setDescription("");
+          setAttachmentFiles([]);
           setDescriptionKey((key) => key + 1);
           setIsDirty(false);
           nameInputRef.current?.focus();
@@ -392,6 +405,13 @@ export function TaskModal({
               }}
               disabled={isBusy}
               initialMode={description.trim() === "" ? "write" : "preview"}
+            />
+
+            <AttachmentField
+              taskId={task?.id}
+              files={attachmentFiles}
+              onFilesChange={setAttachmentFiles}
+              disabled={isBusy}
             />
 
             <DependencyPicker

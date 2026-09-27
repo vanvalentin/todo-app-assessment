@@ -48,6 +48,10 @@ export function sendProblem(
   };
   response.status(status).type(problemContentType).json(problemDetailsSchema.parse(problem));
 }
+function isMultipartLimit(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  return (error as { code?: unknown }).code === "LIMIT_FILE_SIZE";
+}
 function isMalformedJson(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const candidate = error as { type?: unknown; status?: unknown };
@@ -56,6 +60,16 @@ function isMalformedJson(error: unknown): boolean {
 export const errorHandler: ErrorRequestHandler = (error, request, response, next) => {
   if (response.headersSent) {
     next(error);
+    return;
+  }
+  if (isMultipartLimit(error)) {
+    sendProblem(
+      response,
+      request,
+      413,
+      "ATTACHMENT_TOO_LARGE",
+      "The file exceeds the configured size limit.",
+    );
     return;
   }
   if (isMalformedJson(error)) {

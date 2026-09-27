@@ -54,6 +54,16 @@ const environmentSchema = z.object({
   S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   S3_FORCE_PATH_STYLE: booleanFromEnv.default(true),
+  ATTACHMENT_MAX_FILE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(10 * 1024 * 1024),
+  ATTACHMENT_MAX_TASK_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(50 * 1024 * 1024),
   BETTER_AUTH_URL: urlWithProtocol(["http", "https"]).default("http://localhost:3000"),
   BETTER_AUTH_SECRET: z.string().min(32).default(developmentAuthSecret),
   BETTER_AUTH_TRUSTED_ORIGINS: originsFromEnv,

@@ -18,5 +18,6 @@ export const queryKeys = {
   dependencyCandidates: (boardId: string, q: string) =>
     ["board", boardId, "dependency-candidates", q] as const,
   task: (taskId: string) => ["task", taskId] as const,
+  taskAttachments: (taskId: string) => ["task", taskId, "attachments"] as const,
   invitation: (token: string) => ["invitation", token] as const,
 };

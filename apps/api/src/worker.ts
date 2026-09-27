@@ -3,12 +3,19 @@ import { resolve } from "node:path";
 import { createInfrastructure } from "./infrastructure/dependencies.js";
 import { loadEnvironment } from "./config/env.js";
 import { createLogger } from "./logging.js";
+import { startAttachmentCleanupWorker } from "./modules/attachments/attachments.cleanup.js";
 
 export async function startWorker(): Promise<void> {
   const environment = loadEnvironment();
   const logger = createLogger(environment.LOG_LEVEL, environment.NODE_ENV !== "production");
   const infrastructure = createInfrastructure(environment);
-  logger.info("Worker is idle; no background jobs are configured in phase 2 identity");
+  const cleanup = await startAttachmentCleanupWorker({
+    prisma: infrastructure.prisma,
+    s3: infrastructure.s3,
+    bucket: environment.S3_BUCKET,
+    redisUrl: environment.REDIS_URL,
+  });
+  logger.info("Attachment cleanup worker started");
 
   await new Promise<void>((resolveWorker) => {
     let stopped = false;
@@ -17,10 +24,13 @@ export async function startWorker(): Promise<void> {
       if (stopped) return;
       stopped = true;
       clearInterval(keepAlive);
-      void infrastructure.close().finally(() => {
-        logger.info({ reason }, "Idle worker stopped");
-        resolveWorker();
-      });
+      void cleanup
+        .close()
+        .finally(() => infrastructure.close())
+        .finally(() => {
+          logger.info({ reason }, "Idle worker stopped");
+          resolveWorker();
+        });
     };
     process.once("SIGTERM", () => stop("SIGTERM"));
     process.once("SIGINT", () => stop("SIGINT"));
