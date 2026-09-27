@@ -62,6 +62,9 @@ const unsupportedRawSql = [
   // enabled, so both the extension and the index are raw SQL only.
   /^DROP INDEX "task_name_trgm_idx";$/,
   /^DROP EXTENSION "pg_trgm";$/,
+  // Description length and no-self-dependency CHECK constraints (phase 5a).
+  /^ALTER TABLE "task" DROP CONSTRAINT "task_description_length";$/,
+  /^ALTER TABLE "task_dependency" DROP CONSTRAINT "task_dependency_not_self";$/,
 ];
 const unexpected = result.stdout
   .split("\n")

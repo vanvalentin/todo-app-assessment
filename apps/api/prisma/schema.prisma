@@ -176,29 +176,60 @@ enum TaskPriority {
 // check for the same-transaction race. See
 // apps/api/prisma/migrations/20270501000000_task_people_and_dates/migration.sql.
 model Task {
-  id          String       @id
-  boardId     String
-  board       Board        @relation(fields: [boardId], references: [id], onDelete: Cascade)
-  sequence    Int
-  name        String
-  status      TaskStatus   @default(NOT_STARTED)
-  priority    TaskPriority @default(MEDIUM)
-  assigneeId  String?
-  assignee    User?        @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  reporterId  String
-  reporter    User         @relation("TaskReporter", fields: [reporterId], references: [id], onDelete: Restrict)
-  /** A calendar date (no time-of-day, no timezone): see isoDateSchema in @ksat/contracts. */
-  dueDate     DateTime?    @db.Date
-  createdById String
-  createdBy   User         @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  version     Int          @default(1)
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id           String           @id
+  boardId      String
+  board        Board            @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  sequence     Int
+  name         String
+  /**
+   * Raw Markdown source; null when the task has no description.
+   */
+  description  String?
+  status       TaskStatus       @default(NOT_STARTED)
+  priority     TaskPriority     @default(MEDIUM)
+  assigneeId   String?
+  assignee     User?            @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  reporterId   String
+  reporter     User             @relation("TaskReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  /**
+   * A calendar date (no time-of-day, no timezone): see isoDateSchema in @ksat/contracts.
+   */
+  dueDate      DateTime?        @db.Date
+  createdById  String
+  createdBy    User             @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  version      Int              @default(1)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  dependencies TaskDependency[] @relation("TaskDependencies")
+  dependents   TaskDependency[] @relation("TaskDependents")
 
   @@unique([boardId, sequence])
+  // Target of task_dependency's composite foreign keys, which keep both ends of every
+  // dependency edge on the same board.
+  @@unique([boardId, id])
   @@index([boardId, status, sequence])
   @@index([boardId, assigneeId])
   @@index([boardId, dueDate])
   @@index([createdById])
   @@map("task")
+}
+
+// A directed "task depends on dependsOnTask" edge. Both composite foreign keys share
+// boardId, so PostgreSQL itself guarantees that an edge never crosses boards; deleting
+// either task cascades its edges. The raw CHECK constraints task_dependency_not_self
+// (no self-edge) and task_description_length (on task) are maintained in the
+// committed migration because Prisma's schema DSL cannot express CHECK constraints.
+// Cycles are rejected by the service inside a board-locked transaction. See
+// apps/api/prisma/migrations/20270701000000_task_description_and_dependencies/migration.sql.
+model TaskDependency {
+  boardId         String
+  taskId          String
+  dependsOnTaskId String
+  createdAt       DateTime @default(now())
+  task            Task     @relation("TaskDependencies", fields: [boardId, taskId], references: [boardId, id], onDelete: Cascade)
+  dependsOn       Task     @relation("TaskDependents", fields: [boardId, dependsOnTaskId], references: [boardId, id], onDelete: Cascade)
+
+  @@id([taskId, dependsOnTaskId])
+  @@index([boardId, dependsOnTaskId])
+  @@map("task_dependency")
 }
