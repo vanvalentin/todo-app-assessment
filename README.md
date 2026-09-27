@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 4c (finding work) is complete. Tasks now support URL-backed search, assignee/priority/status/due filters, sorting, archive visibility, and stale-search cancellation; 4c preserves the people/date-aware modals and browser journey. Descriptions, dependencies, attachments, and recurrence remain in later phases.
+> **Project status:** delivery phase 5a (content and dependencies) is complete. Tasks now carry a sanitized Markdown description and same-board prerequisites with transactional cycle rejection, on top of 4c's URL-backed search, filters, sorting, and archive visibility. Attachments and recurrence remain in later phases.
 
 ## Product scope
 
@@ -154,6 +154,7 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 - A task, its assignee, reporter, and every dependency belong to the same board.
 - A task cannot depend on itself and dependency cycles are rejected in a transaction.
+- A task cannot move into `IN_PROGRESS` or `COMPLETED` while any dependency is still `NOT_STARTED` or `IN_PROGRESS`. `COMPLETED` and `ARCHIVED` dependencies are settled.
 - Reporter defaults to the current user. Any active board member, including a contributor, may select any other active member as reporter or assignee; board membership—not role—is the authorization boundary for task work.
 - Only active board members can read board data. Contributors manage tasks; managers/admins manage membership and invitations; only admins perform destructive board operations.
 - `ARCHIVED` is a task state and is excluded from list queries by default. Deletion is a separate, explicit operation.
@@ -164,7 +165,7 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
-The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Phase 4a adds the raw `task_name_not_empty` check. Phase 4b adds composite foreign keys from `task(boardId, assigneeId/reporterId)` to `board_membership(boardId, userId)`, because Prisma cannot model the assignee's column-specific `ON DELETE SET NULL` without also making the task's required `boardId` nullable. Their committed migrations are the source of truth; matching comments in `schema.prisma` prevent the omissions from being mistaken for drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
+The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Phase 4a adds the raw `task_name_not_empty` check; phase 5a adds `task_description_length` and `task_dependency_not_self`. Phase 4b adds composite foreign keys from `task(boardId, assigneeId/reporterId)` to `board_membership(boardId, userId)`, because Prisma cannot model the assignee's column-specific `ON DELETE SET NULL` without also making the task's required `boardId` nullable. Their committed migrations are the source of truth; matching comments in `schema.prisma` prevent the omissions from being mistaken for drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
 
 ## Identity delivery (phase 2)
 
@@ -331,7 +332,7 @@ Phase 4b extends the Kanban slice with an optional assignee, required reporter, 
 - **Any member may choose any reporter.** Choice: authorization depends on active membership rather than role. Reason: contributors already manage tasks and reporter assignment is task metadata, not board administration. Consequence: UI and API expose the complete active roster to every board member; both layers still reject users outside the board.
 - **Due dates are calendar dates.** Choice: store PostgreSQL `DATE`, not a UTC timestamp. Reason: a due date names a day and must not shift when viewed in another timezone. Consequence: API values are `YYYY-MM-DD`; the web computes `days left`, `Due today`, and `overdue` against the viewer's local calendar day. UTC remains authoritative for actual timestamps.
 - **Radix provides behavior only.** `@radix-ui/react-dialog`, `react-select`, and `react-popover` provide focus, layering, and keyboard semantics; Sass Modules and repository tokens own every visual style.
-- **Later modal sections are omitted.** Description/Markdown, tags, projects, dependencies, and attachments remain phases 5a/5b rather than appearing as fake controls.
+- **Later modal sections are omitted.** Tags, projects, and attachments are not rendered as fake controls. Phase 5a added the description and dependency sections.
 
 ### Web behavior
 
@@ -345,6 +346,44 @@ Phase 4b extends the Kanban slice with an optional assignee, required reporter, 
 
 Contract tests reject impossible dates; service/HTTP tests cover defaults and 422 errors; PostgreSQL integration tests cover cross-board rejection, persisted people/date values, optimistic concurrency, and assignee clearing on membership removal. Testing Library/MSW covers create-more, people/date submission, conflict reload, membership errors, discard, deletion, and controlled-clock overdue rendering. Playwright extends the unseeded signup journey through create with assignee/date, edit/persist, and modal deletion.
 
+
+## Content and dependencies delivery (phase 5a)
+
+Phase 5a adds a Markdown description and same-board task dependencies ("depends on") to the task modal, API, and cards.
+
+### Persistence, contract, and authorization
+
+- Migration `20270701000000_task_description_and_dependencies` adds nullable `task.description` with the raw CHECK `task_description_length` (1–10,000 characters). It also adds `task_dependency(boardId, taskId, dependsOnTaskId)`, keyed by `(taskId, dependsOnTaskId)`, with the raw CHECK `task_dependency_not_self`. Both composite foreign keys reference the new `task(boardId, id)` unique index and share the edge's `boardId`, so PostgreSQL rejects any edge that crosses boards. Deleting either task cascades its edges.
+- `Task` responses add `description` (Markdown source or `null`) and `dependsOn`: `{ id, sequence, name, status }` previews ordered by sequence. Create accepts optional `description`/`dependsOnIds`. PATCH stays a full-state update: `dependsOnIds` replaces the whole prerequisite set, so a column move re-sends the current set.
+- Input rules: a blank description becomes `null`; any other Markdown is stored verbatim. `dependsOnIds` holds at most 20 unique UUIDs.
+- Authorization is unchanged: every active board member may set a description and choose any task on the same board, including an archived one, as a prerequisite.
+- Errors (422): `TASK_DEPENDENCY_NOT_FOUND` for an unknown, deleted, or other-board task; `TASK_DEPENDENCY_SELF` when a task names itself; `TASK_DEPENDENCY_CYCLE` when a new prerequisite already depends on the task, directly or transitively; `TASK_DEPENDENCIES_INCOMPLETE` when a create, modal update, or drag would move a dependent task into `IN_PROGRESS` or `COMPLETED` while a prerequisite is still `NOT_STARTED` or `IN_PROGRESS`. A stale version still returns `409` and leaves the dependency set unchanged.
+
+### Cycle check and concurrency
+
+Only a newly added edge can close a cycle. When an update adds edges, the repository locks the board row (`SELECT … FOR UPDATE`). It then walks the existing graph from the new prerequisites with a recursive CTE, inside the same transaction as the versioned update. Two concurrent edits that would each add half of a loop (A→B and B→A) therefore serialize, and the second sees the first edge. The PostgreSQL integration suite covers this race. Edges change only after the version predicate wins. Creation needs no walk because a new task has no dependents. Because the walk precedes the settledness gate, one request that both closes a loop and moves into a gated status reports the loop.
+
+### Web behavior
+
+- The modal's **Description** section opens as an editor with keyboard-accessible Heading, Bold, Italic, List, Link, and Code controls. A single **Preview** toggle swaps between editing and the sanitized renderer; a saved description opens in preview and the toggle returns focus to the editor.
+- Markdown is rendered with `react-markdown` and `remark-gfm`, with `skipHtml`. No `rehype-raw` is used, so raw HTML is dropped rather than rendered. The default URL transform strips unsafe protocols, and links open in a new tab with `rel="noopener noreferrer nofollow"`. GFM task lists render as read-only checkboxes.
+- **Depends on** lists each prerequisite as a chip with its number, name, status as text, and a labelled remove button. **Add dependency** opens a popover. It holds a debounced search across the board, including archived tasks, and native checkboxes for each result, plus loading, error-with-retry, empty, and 20-item-limit states. The task being edited is never offered.
+- Create and edit modals explain that every dependency must be completed before the task can enter **In Progress** or **Completed**, and that archived dependencies no longer block it. A dependency 422 is shown on the **Depends on** field, which is marked `aria-invalid`, and in the submit error; drag failures roll back the card and remain visible in an error toast. The chosen set is kept so the user can correct it and save again. **Create more** clears the description but keeps the other properties.
+- Cards show the Figma `1:128` dependency pill: `Depends on: #n Name`, plus `+N more` when there are several. It uses the Figma link icon, committed as `apps/web/src/assets/tasks/dependency-link.svg`.
+- Optimistic edits include the description and dependency previews and roll back on failure like other fields.
+
+### Accepted decisions
+
+- **Dependencies gate forward moves.** Choice: a task may move into `IN_PROGRESS` or `COMPLETED` only when every selected prerequisite is settled; `NOT_STARTED` and `ARCHIVED` stay reachable at any time. Reason: work should not start or finish ahead of its prerequisites. Consequence: the API enforces the rule for create, modal, and drag writes with `TASK_DEPENDENCIES_INCOMPLETE`; the web explains the rule, keeps modal state for correction, and rolls failed optimistic moves back.
+- **An archived prerequisite stops blocking, but the edge stays.** Choice: `ARCHIVED` counts as settled while the dependency row survives. Reason: the domain maps the prototype's "Canceled" control onto `ARCHIVED`, so cancelled work will never complete; had it kept blocking, every dependent would dead-end until its edge was deleted, losing the record that the prerequisite was never finished. Consequence: dependents of archived work can proceed, and the chip still shows `Archived` in words so the difference from a completed prerequisite stays visible. Deleting the prerequisite is still the only way to drop the edge.
+- **The cycle check outranks the status gate.** Choice: one request that both moves into a gated status and closes a loop reports `TASK_DEPENDENCY_CYCLE`. Reason: a loop can never be satisfied, so naming it is more useful than reporting prerequisites the caller cannot complete. Consequence: the cycle walk runs before the settledness check in the same transaction.
+- **Markdown library.** Choice: `react-markdown` 10.1.0 + `remark-gfm` 4.0.1, pinned, rather than a hand-written sanitizer. Reason: the library builds React elements and never uses `dangerouslySetInnerHTML`, and disabling HTML is one option. Consequence: about 1,100 lockfile lines of unified/micromark dependencies.
+- **Board-row lock for graph writes.** Choice: lock the board row, as sequence allocation already does, rather than use SERIALIZABLE isolation. Reason: the invariant spans many rows and is board-scoped. Consequence: dependency-adding updates on one board serialize; updates that add no edge are unaffected.
+- **Figma coverage.** The edit modal `1:479` could not be re-inspected during 5a because the Figma MCP Starter-plan call limit had been reached. The card pill follows the cached `1:128` design context. The modal sections reuse the existing modal/pill tokens and should be compared against `1:479` during release hardening.
+
+### Verification scope
+
+Contract tests cover description normalization and limits and the dependency-id bounds. Service tests cover the self-dependency and 422 mappings. PostgreSQL integration tests cover ordered previews, cross-board and unknown ids, direct and transitive cycles, the concurrent opposite-edge race, stale-version preservation, cascade on delete, the raw CHECK constraints, gated `IN_PROGRESS` and `COMPLETED` moves, an archived prerequisite that settles without losing its edge, an unchanged status staying editable after a prerequisite drifts back, and a cycle winning over the status gate. Testing Library/MSW covers Markdown formatting controls, the Preview toggle, dependency guidance, sanitized rendering, incomplete-prerequisite and cycle-error recovery, and the archived state shown on a prerequisite chip. Playwright verifies a rejected pointer move rolls back with a visible error. The seed adds deterministic descriptions and two same-board edges.
 
 ## API conventions
 
@@ -485,7 +524,7 @@ Compose health checks and `depends_on: condition: service_healthy` will gate sta
 - **Unit:** domain rules, recurrence calculations, authorization decisions, validators, cache-key/invalidation logic, and React components.
 - **API integration:** Express app factory + Supertest against isolated PostgreSQL/Redis/MinIO test dependencies; test Better Auth credential/session flows and both allowed and forbidden application paths. Social-provider tests use mocked provider responses.
 - **Contract:** generated application OpenAPI snapshot, Better Auth route-reference availability, and representative request/response schemas.
-- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion. Later slices add task filtering/archiving and attachments.
+- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion; phase 5a adds a Markdown description (raw HTML not rendered), a searched dependency shown on the card, a rejected reverse cycle, and the full-screen sheet at 375px. Later slices add attachments.
 - **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions.
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
@@ -533,7 +572,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
    - **4b — People and dates (complete):** assignee and reporter limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
    - **4c — Finding work (complete):** URL-backed name/sequence search; assignee, priority, status, and viewer-local due filters; due-date/priority/newest/oldest/name sorting; archive/restore with an explicit show-archived toggle; keyset pagination and stale-search cancellation.
 5. **Task detail**
-   - **5a — Content and dependencies:** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
+   - **5a — Content and dependencies (complete):** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
    - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.
 6. **Recurring work** — RRULE editor, queue/worker generation, idempotency and timezone tests.
 7. **Release hardening** — full accessibility audit, Figma comparison of every screen, OpenAPI review, operational documentation, and a complete end-to-end suite.
