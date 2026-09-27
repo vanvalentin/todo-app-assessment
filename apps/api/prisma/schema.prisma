@@ -185,6 +185,7 @@ model Task {
    * Raw Markdown source; null when the task has no description.
    */
   description  String?
+  deletedAt    DateTime?
   status       TaskStatus       @default(NOT_STARTED)
   priority     TaskPriority     @default(MEDIUM)
   assigneeId   String?
@@ -209,6 +210,8 @@ model Task {
   // dependency edge on the same board.
   @@unique([boardId, id])
   @@index([boardId, status, sequence])
+  @@index([boardId, deletedAt, status, sequence])
+  @@index([boardId, deletedAt, assigneeId])
   @@index([boardId, assigneeId])
   @@index([boardId, dueDate])
   @@index([createdById])
@@ -232,6 +235,7 @@ model TaskDependency {
 
   @@id([taskId, dependsOnTaskId])
   @@index([boardId, dependsOnTaskId])
+  @@index([boardId, taskId, dependsOnTaskId])
   @@map("task_dependency")
 }
 

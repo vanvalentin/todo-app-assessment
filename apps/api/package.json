@@ -21,6 +21,7 @@
     "db:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "db:seed": "node dist/src/seed.js",
     "db:seed:dev": "tsx --env-file-if-exists=.env src/seed.ts",
+    "task:restore": "tsx --env-file-if-exists=.env src/task-restore.ts",
     "db:migrate:diff": "node scripts/check-migration-diff.mjs"
   },
   "dependencies": {

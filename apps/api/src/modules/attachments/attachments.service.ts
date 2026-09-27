@@ -115,7 +115,7 @@ function safeFilename(name: string): string {
 export function createAttachmentsService(deps: AttachmentsDeps): AttachmentsService {
   const authorizedTask = (userId: string, taskId: string) =>
     deps.prisma.task.findFirst({
-      where: { id: taskId, board: { memberships: { some: { userId } } } },
+      where: { id: taskId, deletedAt: null, board: { memberships: { some: { userId } } } },
       select: { id: true },
     });
   return {
@@ -156,7 +156,7 @@ export function createAttachmentsService(deps: AttachmentsDeps): AttachmentsServ
         );
         const created = await deps.prisma.$transaction(async (tx) => {
           const task = await tx.task.findFirst({
-            where: { id: taskId, board: { memberships: { some: { userId } } } },
+            where: { id: taskId, deletedAt: null, board: { memberships: { some: { userId } } } },
             select: { id: true },
           });
           if (!task) notFound();

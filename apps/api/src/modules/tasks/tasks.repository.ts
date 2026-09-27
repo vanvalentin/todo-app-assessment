@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { BoardRole, TaskPriority, TaskSort, TaskStatus } from "@ksat/contracts";
 import { generateUuid } from "../../auth/identity.js";
+import { nextOccurrence, occurrenceDueDate } from "./recurrence.js";
 import type {
   CreateTaskResult,
   DeleteTaskResult,
@@ -19,6 +20,7 @@ const withPeople = {
   createdBy: { select: personPreview },
   assignee: { select: personPreview },
   dependencies: {
+    where: { dependsOn: { deletedAt: null } },
     select: { dependsOn: { select: { id: true, sequence: true, name: true, status: true } } },
     orderBy: { dependsOn: { sequence: "asc" } },
   },
@@ -42,6 +44,7 @@ const withPeople = {
   },
 } as const;
 const WRITE_CONFLICT_RETRIES = 5;
+const activeTaskPredicate = { deletedAt: null } as const;
 
 /**
  * Statuses a dependent may move into only once every prerequisite has settled.
@@ -146,9 +149,29 @@ function memberScope(userId: string): { board: { memberships: { some: { userId: 
 function filtersWhere(boardId: string, userId: string, filters: TaskListFilters): object {
   const clauses: object[] = [
     { boardId },
+    { deletedAt: null },
     memberScope(userId),
     { status: { in: filters.statuses } },
   ];
+  if (filters.blocking === "BLOCKED") {
+    clauses.push({
+      dependencies: {
+        some: {
+          dependsOn: { deletedAt: null, status: { in: ["NOT_STARTED", "IN_PROGRESS"] } },
+        },
+      },
+    });
+  } else if (filters.blocking === "UNBLOCKED") {
+    clauses.push({
+      NOT: {
+        dependencies: {
+          some: {
+            dependsOn: { deletedAt: null, status: { in: ["NOT_STARTED", "IN_PROGRESS"] } },
+          },
+        },
+      },
+    });
+  }
   if (filters.priority !== undefined) clauses.push({ priority: filters.priority });
   if (filters.assigneeId === null) clauses.push({ assigneeId: null });
   else if (filters.assigneeId !== undefined) clauses.push({ assigneeId: filters.assigneeId });
@@ -317,6 +340,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     const blocking = await tx.task.count({
       where: {
         boardId,
+        deletedAt: null,
         id: { in: [...dependsOnIds] },
         status: { in: ["NOT_STARTED", "IN_PROGRESS"] },
       },
@@ -360,6 +384,90 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     }
     return false;
   }
+  async function generateNextOccurrenceOnCompletion(
+    tx: Prisma.TransactionClient,
+    taskId: string,
+    now: Date,
+  ): Promise<void> {
+    const schedule = await tx.taskSchedule.findFirst({
+      where: {
+        enabled: true,
+        OR: [{ taskId }, { occurrences: { some: { generatedTaskId: taskId } } }],
+      },
+      include: {
+        task: {
+          select: {
+            boardId: true,
+            name: true,
+            description: true,
+            priority: true,
+            assigneeId: true,
+            createdById: true,
+            deletedAt: true,
+          },
+        },
+        occurrences: {
+          where: { generatedTaskId: taskId },
+          select: { scheduledAt: true },
+          take: 1,
+        },
+      },
+    });
+    if (!schedule?.task || schedule.task.deletedAt !== null) return;
+
+    const currentScheduledAt = schedule.occurrences[0]?.scheduledAt ?? schedule.nextRunAt;
+    if (!currentScheduledAt) return;
+    const anchor = new Date(Math.max(currentScheduledAt.getTime(), now.getTime()));
+    const scheduledAt =
+      schedule.occurrences.length > 0
+        ? nextOccurrence(schedule, anchor)
+        : currentScheduledAt.getTime() > now.getTime()
+          ? currentScheduledAt
+          : nextOccurrence(schedule, anchor);
+    if (!scheduledAt) {
+      await tx.taskSchedule.update({
+        where: { id: schedule.id },
+        data: { enabled: false, nextRunAt: null },
+      });
+      return;
+    }
+
+    const board = await tx.board.update({
+      where: { id: schedule.task.boardId },
+      data: { nextTaskSequence: { increment: 1 } },
+      select: { nextTaskSequence: true },
+    });
+    const generatedTaskId = generateUuid();
+    await tx.task.create({
+      data: {
+        id: generatedTaskId,
+        boardId: schedule.task.boardId,
+        sequence: board.nextTaskSequence - 1,
+        name: schedule.task.name,
+        description: schedule.task.description,
+        status: "NOT_STARTED",
+        priority: schedule.task.priority,
+        assigneeId: schedule.task.assigneeId,
+        dueDate: occurrenceDueDate(scheduledAt, schedule.timezone),
+        createdById: schedule.task.createdById,
+      },
+      select: { id: true },
+    });
+    await tx.scheduleOccurrence.create({
+      data: {
+        id: generateUuid(),
+        scheduleId: schedule.id,
+        scheduledAt,
+        generatedTaskId,
+      },
+    });
+    const nextRunAt = nextOccurrence(schedule, scheduledAt);
+    await tx.taskSchedule.update({
+      where: { id: schedule.id },
+      data: nextRunAt ? { nextRunAt } : { nextRunAt: null, enabled: false },
+    });
+  }
+
   return {
     async findMembershipRole(boardId, userId): Promise<BoardRole | null> {
       const row = await prisma.boardMembership.findUnique({
@@ -467,7 +575,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
 
     async getForMember(taskId, userId): Promise<TaskRow | null> {
       const row = await prisma.task.findFirst({
-        where: { id: taskId, ...memberScope(userId) },
+        where: { id: taskId, deletedAt: null, ...memberScope(userId) },
         include: withPeople,
       });
       return row === null ? null : toTaskRow(row);
@@ -477,7 +585,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       return retryOnWriteConflict(() =>
         prisma.$transaction(async (tx) => {
           const existing = await tx.task.findFirst({
-            where: { id: taskId, ...memberScope(userId) },
+            where: { id: taskId, deletedAt: null, ...memberScope(userId) },
             select: {
               boardId: true,
               status: true,
@@ -521,7 +629,12 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
           let updated: { count: number };
           try {
             updated = await tx.task.updateMany({
-              where: { id: taskId, version: input.version, ...memberScope(userId) },
+              where: {
+                id: taskId,
+                version: input.version,
+                ...activeTaskPredicate,
+                ...memberScope(userId),
+              },
               data: {
                 name: input.name,
                 description: input.description,
@@ -584,15 +697,18 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 data: { enabled: false, nextRunAt: null },
               });
             }
+            if (input.status === "COMPLETED" && existing.status !== "COMPLETED") {
+              await generateNextOccurrenceOnCompletion(tx, taskId, new Date());
+            }
             const row = await tx.task.findFirst({
-              where: { id: taskId, ...memberScope(userId) },
+              where: { id: taskId, deletedAt: null, ...memberScope(userId) },
               include: withPeople,
             });
             if (row) return { kind: "UPDATED", task: toTaskRow(row) } as const;
           }
           // A zero-row write is either a stale version or a task the caller cannot see.
           const stillVisible = await tx.task.findFirst({
-            where: { id: taskId, ...memberScope(userId) },
+            where: { id: taskId, ...activeTaskPredicate, ...memberScope(userId) },
             select: { id: true },
           });
           return stillVisible
@@ -606,32 +722,20 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       return retryOnWriteConflict(async () => {
         return prisma.$transaction(async (tx) => {
           const visible = await tx.task.findFirst({
-            where: { id: taskId, version, ...memberScope(userId) },
+            where: { id: taskId, version, deletedAt: null, ...memberScope(userId) },
             select: { id: true },
           });
           if (!visible) {
             const stillVisible = await tx.task.findFirst({
-              where: { id: taskId, ...memberScope(userId) },
+              where: { id: taskId, deletedAt: null, ...memberScope(userId) },
               select: { id: true },
             });
             return stillVisible ? ("VERSION_CONFLICT" as const) : ("NOT_FOUND" as const);
           }
-          const attachments = await tx.attachment.findMany({
-            where: { taskId },
-            select: { objectKey: true },
+          await tx.task.update({
+            where: { id: taskId },
+            data: { deletedAt: new Date(), version: { increment: 1 } },
           });
-          for (const attachment of attachments) {
-            await tx.objectCleanup.upsert({
-              where: { objectKey: attachment.objectKey },
-              create: { id: generateUuid(), objectKey: attachment.objectKey },
-              update: { completedAt: null, lastErrorCode: null },
-            });
-          }
-          await tx.taskSchedule.updateMany({
-            where: { taskId },
-            data: { enabled: false, nextRunAt: null, taskId: null },
-          });
-          await tx.task.delete({ where: { id: taskId } });
           return "DELETED" as const;
         });
       });

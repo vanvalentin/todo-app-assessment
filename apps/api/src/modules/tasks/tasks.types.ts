@@ -5,6 +5,7 @@ import type {
   TaskSort,
   TaskStatus,
   TaskRecurrence,
+  TaskBlockingFilter,
 } from "@ksat/contracts";
 
 export interface TaskPersonPreview {
@@ -64,6 +65,7 @@ export interface TaskListFilters {
   readonly statuses: readonly TaskStatus[];
   readonly assigneeId?: string | null;
   readonly priority?: TaskPriority;
+  readonly blocking?: TaskBlockingFilter;
   readonly due?: ResolvedDueFilter;
   readonly search?: TaskSearchFilter;
 }

@@ -273,7 +273,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     responses: {
       200: {
         description:
-          "Board tasks matching the search/filter/sort query. ARCHIVED tasks are excluded unless includeArchived=true.",
+          "Board tasks matching the search/filter/sort/blocking query. ARCHIVED tasks are excluded unless includeArchived=true; deleted tasks are retained but never returned.",
         ...json(taskListResponseSchema),
       },
       400: {
@@ -362,7 +362,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
     security: [{ cookieAuth: [] }],
     request: { params: taskParamSchema, query: deleteTaskQuerySchema },
     responses: {
-      204: { description: "Task deleted." },
+      204: { description: "Task soft-deleted; retained data can be restored by an engineer." },
       400: { description: "Malformed task id or missing/invalid version.", ...problem },
       401: { description: "Unauthenticated.", ...problem },
       403: { description: "Trusted origin required.", ...problem },

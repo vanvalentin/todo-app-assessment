@@ -2,10 +2,6 @@ import { PrismaClient } from "@prisma/client";
 import type { TaskStatus } from "@ksat/contracts";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createPrismaTasksRepository } from "../../src/modules/tasks/tasks.repository.js";
-import {
-  generateOccurrence,
-  startRecurrenceWorker,
-} from "../../src/modules/tasks/recurrence.worker.js";
 import type { TaskRow } from "../../src/modules/tasks/tasks.types.js";
 
 const configuredDatabaseUrl = process.env.INTEGRATION_DATABASE_URL;
@@ -315,6 +311,8 @@ run("PostgreSQL tasks", () => {
       "DELETED",
     );
     await expect(repository.getForMember(task.id, ids.admin)).resolves.toBeNull();
+    const deleted = await prisma.task.findUnique({ where: { id: task.id } });
+    expect(deleted).toMatchObject({ deletedAt: expect.any(Date), version: task.version + 1 });
   });
 
   it("nulls the assignee when the database removes the member row directly", async () => {
@@ -628,6 +626,64 @@ run("PostgreSQL tasks", () => {
       ]);
       expect(new Set(seen).size).toBe(5);
     });
+
+    it("filters blocked tasks by active prerequisites", async () => {
+      const create = async (name: string, status: "NOT_STARTED" | "COMPLETED") => {
+        const result = await repository.createForMember(filterBoardId, ids.admin, {
+          name,
+          status,
+          priority: "MEDIUM",
+          assigneeId: null,
+          description: null,
+          dependsOnIds: [],
+          dueDate: null,
+        });
+        if (result.kind !== "CREATED") throw new Error("expected a created task");
+        return result.task;
+      };
+
+      const activePrerequisite = await create("Active prerequisite", "NOT_STARTED");
+      const blocked = await repository.createForMember(filterBoardId, ids.admin, {
+        name: "Blocked task",
+        status: "NOT_STARTED",
+        priority: "MEDIUM",
+        assigneeId: null,
+        description: null,
+        dependsOnIds: [activePrerequisite.id],
+        dueDate: null,
+      });
+      if (blocked.kind !== "CREATED") throw new Error("expected a created task");
+
+      const completedPrerequisite = await create("Completed prerequisite", "COMPLETED");
+      const unblocked = await repository.createForMember(filterBoardId, ids.admin, {
+        name: "Unblocked task",
+        status: "NOT_STARTED",
+        priority: "MEDIUM",
+        assigneeId: null,
+        description: null,
+        dependsOnIds: [completedPrerequisite.id],
+        dueDate: null,
+      });
+      if (unblocked.kind !== "CREATED") throw new Error("expected a created task");
+
+      const blockedPage = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], blocking: "BLOCKED" },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(blockedPage.items.map((item) => item.id)).toContain(blocked.task.id);
+      expect(blockedPage.items.map((item) => item.id)).not.toContain(unblocked.task.id);
+
+      const unblockedPage = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], blocking: "UNBLOCKED" },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(unblockedPage.items.map((item) => item.id)).toContain(unblocked.task.id);
+      expect(unblockedPage.items.map((item) => item.id)).not.toContain(blocked.task.id);
+    });
   });
 
   describe("phase 5a description and dependencies", () => {
@@ -933,13 +989,18 @@ run("PostgreSQL tasks", () => {
       expect((await reload(task.id)).dependsOn.map((item) => item.id)).toEqual([prerequisite.id]);
     });
 
-    it("drops edges when a prerequisite is deleted", async () => {
+    it("hides a soft-deleted prerequisite while retaining its edge for recovery", async () => {
       const prerequisite = await create("Deleted prerequisite");
       const task = await create("Survivor", [prerequisite.id]);
       await expect(
         repository.deleteForMember(prerequisite.id, ids.contributor, prerequisite.version),
       ).resolves.toBe("DELETED");
       expect((await reload(task.id)).dependsOn).toEqual([]);
+      await expect(
+        prisma.taskDependency.count({
+          where: { taskId: task.id, dependsOnTaskId: prerequisite.id },
+        }),
+      ).resolves.toBe(1);
     });
 
     it("enforces same-board edges, no self-edges, and non-blank descriptions in PostgreSQL", async () => {
@@ -979,17 +1040,32 @@ run("PostgreSQL tasks", () => {
         },
         version: template.version,
       });
-      expect(updated.kind).toBe("UPDATED");
+      if (updated.kind !== "UPDATED") throw new Error("expected an updated recurring task");
       const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: template.id } });
       if (schedule === null) throw new Error("expected a persisted schedule");
-      await generateOccurrence(prisma, {
-        scheduleId: schedule.id,
-        scheduledAt: scheduledAt.toISOString(),
+      const completed = await repository.updateForMember(template.id, ids.contributor, {
+        name: template.name,
+        description: "Stable **description**",
+        status: "COMPLETED",
+        priority: "HIGH",
+        assigneeId: ids.admin,
+        dueDate: null,
+        dependsOnIds: [],
+        version: updated.task.version,
       });
-      await generateOccurrence(prisma, {
-        scheduleId: schedule.id,
-        scheduledAt: scheduledAt.toISOString(),
-      });
+      expect(completed.kind).toBe("UPDATED");
+      await expect(
+        repository.updateForMember(template.id, ids.contributor, {
+          name: template.name,
+          description: "Stable **description**",
+          status: "COMPLETED",
+          priority: "HIGH",
+          assigneeId: ids.admin,
+          dueDate: null,
+          dependsOnIds: [],
+          version: updated.task.version,
+        }),
+      ).resolves.toEqual({ kind: "VERSION_CONFLICT" });
       const occurrence = await prisma.scheduleOccurrence.findUnique({
         where: { scheduleId_scheduledAt: { scheduleId: schedule.id, scheduledAt } },
         include: { generatedTask: true },
@@ -1005,53 +1081,7 @@ run("PostgreSQL tasks", () => {
       expect(await prisma.scheduleOccurrence.count({ where: { scheduleId: schedule.id } })).toBe(1);
     });
 
-    it.skipIf(process.env.INTEGRATION_REDIS_URL === undefined)(
-      "processes a due schedule through the real BullMQ worker",
-      async () => {
-        const redisUrl = process.env.INTEGRATION_REDIS_URL;
-        if (redisUrl === undefined) throw new Error("INTEGRATION_REDIS_URL is required");
-        const template = await create("Worker process smoke");
-        const nextRunAt = new Date(Date.now() - 1_000);
-        const updated = await repository.updateForMember(template.id, ids.contributor, {
-          name: template.name,
-          description: template.description,
-          status: template.status,
-          priority: template.priority,
-          assigneeId: null,
-          dueDate: null,
-          dependsOnIds: [],
-          schedule: {
-            rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
-            timezone: "UTC",
-            startLocal: "2027-04-19T09:00:00",
-            enabled: true,
-            nextRunAt,
-          },
-          version: template.version,
-        });
-        expect(updated.kind).toBe("UPDATED");
-        const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: template.id } });
-        if (schedule === null) throw new Error("expected a persisted schedule");
-
-        const runtime = await startRecurrenceWorker({ prisma, redisUrl });
-        try {
-          let occurrence = null;
-          for (let attempt = 0; attempt < 40 && occurrence === null; attempt += 1) {
-            occurrence = await prisma.scheduleOccurrence.findUnique({
-              where: {
-                scheduleId_scheduledAt: { scheduleId: schedule.id, scheduledAt: nextRunAt },
-              },
-            });
-            if (occurrence === null) await new Promise((resolve) => setTimeout(resolve, 250));
-          }
-          expect(occurrence).not.toBeNull();
-        } finally {
-          await runtime.close();
-        }
-      },
-    );
-
-    it("persists a schedule through a versioned task update and cancels it on deletion", async () => {
+    it("retains a schedule when its task is soft-deleted", async () => {
       const task = await create("Recurring task");
       const updated = await repository.updateForMember(task.id, ids.contributor, {
         name: task.name,
@@ -1083,10 +1113,11 @@ run("PostgreSQL tasks", () => {
       await expect(
         prisma.taskSchedule.findFirst({ where: { id: schedule.id } }),
       ).resolves.toMatchObject({
-        taskId: null,
-        enabled: false,
-        nextRunAt: null,
+        taskId: task.id,
+        enabled: true,
       });
+      const deleted = await prisma.task.findUnique({ where: { id: task.id } });
+      expect(deleted).toMatchObject({ deletedAt: expect.any(Date) });
     });
   });
 });

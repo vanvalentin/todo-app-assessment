@@ -162,6 +162,14 @@ export function parseSchedule(input: TaskScheduleInput, now = new Date()): Parse
   };
 }
 
+export function occurrenceDueDate(instant: Date, timezone: string): Date {
+  const local = DateTime.fromJSDate(instant, { zone: timezone });
+  if (!local.isValid) {
+    throw new RecurrenceValidationError("RRULE_INVALID", "The recurrence occurrence is invalid.");
+  }
+  return new Date(`${local.toISODate()}T00:00:00.000Z`);
+}
+
 export function nextOccurrence(
   schedule: Pick<ParsedSchedule, "rrule" | "timezone" | "startLocal">,
   after: Date,

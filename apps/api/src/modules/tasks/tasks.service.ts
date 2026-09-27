@@ -7,6 +7,7 @@ import type {
   TaskPriority,
   TaskSort,
   TaskStatus,
+  TaskBlockingFilter,
   UpdateTaskRequest,
 } from "@ksat/contracts";
 import { HttpError } from "../../errors.js";
@@ -37,6 +38,7 @@ export interface TaskPageQuery {
   readonly assignee?: string;
   readonly priority?: TaskPriority;
   readonly status?: ActiveTaskStatus;
+  readonly blocking?: TaskBlockingFilter;
   readonly includeArchived?: boolean;
   readonly due?: TaskDueFilter;
   readonly today?: string;
@@ -223,6 +225,7 @@ function resolveFilters(query: TaskPageQuery): TaskListFilters {
       ? { assigneeId: query.assignee === "none" ? null : query.assignee }
       : {}),
     ...(query.priority !== undefined ? { priority: query.priority } : {}),
+    ...(query.blocking !== undefined ? { blocking: query.blocking } : {}),
     ...(due !== undefined ? { due } : {}),
     ...(query.q !== undefined
       ? { search: { name: query.q, sequence: parseSequenceCandidate(query.q) } }
