@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 6 (recurring work) is complete; release hardening remains. Recurring schedules use validated RFC 5545 rules, explicit IANA timezones, PostgreSQL idempotency, and a BullMQ worker.
+> **Project status:** delivery phase 7 (release hardening) is complete. The MVP is releasable: unusable prototype controls are omitted, an accessibility audit fixed real contrast defects, the OpenAPI document has verified route coverage, and a complete Playwright suite covers boards, tasks, membership, and recurrence.
 
 ## Product scope
 
@@ -20,7 +20,7 @@ A collaborative TODO board application designed from the supplied [Figma file](h
   - due date;
   - optional recurring schedule;
   - status and priority;
-  - assignee and reporter;
+  - assignee;
   - dependencies on other tasks in the same board.
 - List board members and invite a member by email with an assigned role.
 - Run the complete application locally with Docker Compose.
@@ -28,9 +28,21 @@ A collaborative TODO board application designed from the supplied [Figma file](h
 
 ### Explicitly deferred
 
-The Figma file also contains controls for favorites, tags, projects, “My Tasks”, archive pages, roster export, audit logs, keyboard shortcuts, and sync indicators. These may be rendered to preserve the composition but do not need behavior in the first release. Board creation is not deferred: any signed-in user can create a board and becomes its `ADMIN`, so a new account never lands on a dead end.
+The Figma file also contains controls for favorites, tags, projects, “My Tasks”, archive pages, roster export, audit logs, keyboard shortcuts, and sync indicators. These do not need behavior in the first release, and phase 7 omits them from markup rather than rendering them inert (see "Inert prototype controls are omitted" below). Board creation is not deferred: any signed-in user can create a board and becomes its `ADMIN`, so a new account never lands on a dead end.
 
 Email invites are functional in local development through Mailpit; delivering public email is an environment/deployment concern. Real-time multi-user updates, comments, notifications, malware scanning, and external identity providers are also deferred.
+
+### Inert prototype controls are omitted
+
+- **Choice:** deferred prototype controls (`My Tasks`, `Archive` nav items, the `Synced` pill, `Export Roster`, and the shell `New Task` CTA when no board handler is available) are omitted from markup entirely, rather than rendered as disabled/`aria-disabled` affordances.
+- **Reason:** inert controls are unusable, confuse keyboard and screen-reader users (a focusable-but-inert element, or an `aria-disabled` element with no operation, breaks expectations), and add visual noise without value.
+- **Consequence:** a small visual deviation from the Figma frames (missing nav items, pill, and buttons) in exchange for a cleaner, fully operable interface. Archive remains reachable through each board's explicit show-archived toggle.
+
+### Figma comparison scope for release hardening
+
+- **Choice:** release hardening (delivery plan item 7) does not re-compare every screen against Figma pixel-for-pixel; only screens touched by this phase are checked in a browser at desktop and 375px widths.
+- **Reason:** explicit user instruction for this phase; prior phases already compared each screen against its frame when first implemented.
+- **Consequence:** the phase-5a note on comparing the edit modal against `1:479` is resolved as descoped rather than completed, and phase 7 does not repeat full-screen Figma review.
 
 ## Design source of truth
 
@@ -144,7 +156,7 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 - **Board** — name, description, owner, timestamps, and optimistic concurrency version.
 - **BoardMembership** — board, user, role (`ADMIN`, `MANAGER`, `CONTRIBUTOR`), joined timestamp; unique per board/user.
 - **BoardInvitation** — board, normalized email, role, token hash, inviter, expiry, accepted/revoked timestamps. Plain invite tokens are never persisted.
-- **Task** — board, human-friendly board sequence number, name, Markdown description, status, priority, due date, assignee, reporter, creator, version, timestamps, and optional soft-deletion timestamp.
+- **Task** — board, human-friendly board sequence number, name, Markdown description, status, priority, due date, assignee, creator, version, timestamps, and optional soft-deletion timestamp.
 - **TaskDependency** — directed `task -> dependsOnTask` edge, unique per pair.
 - **Attachment** — task, uploader, object key, original filename, media type, byte size, checksum, timestamps.
 - **TaskSchedule** — template task, RRULE, timezone, start/end values, next run, enabled flag.
@@ -152,10 +164,9 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 ### Invariants
 
-- A task, its assignee, reporter, and every dependency belong to the same board.
+- A task, its assignee, and every dependency belong to the same board.
 - A task cannot depend on itself and dependency cycles are rejected in a transaction.
 - A task cannot move into `IN_PROGRESS` or `COMPLETED` while any dependency is still `NOT_STARTED` or `IN_PROGRESS`. `COMPLETED` and `ARCHIVED` dependencies are settled.
-- Reporter defaults to the current user. Any active board member, including a contributor, may select any other active member as reporter or assignee; board membership—not role—is the authorization boundary for task work.
 - Only active board members can read board data. Contributors manage tasks; managers/admins manage membership and invitations; only admins perform destructive board operations.
 - `ARCHIVED` is a task state and is excluded from list queries by default. Deletion is a separate, explicit operation.
 - Task updates include a `version`; stale updates return `409 Conflict` rather than silently overwriting another edit.
@@ -165,7 +176,8 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
-The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Phase 4a adds the raw `task_name_not_empty` check; phase 5a adds `task_description_length` and `task_dependency_not_self`. Phase 4b adds composite foreign keys from `task(boardId, assigneeId/reporterId)` to `board_membership(boardId, userId)`, because Prisma cannot model the assignee's column-specific `ON DELETE SET NULL` without also making the task's required `boardId` nullable. Their committed migrations are the source of truth; matching comments in `schema.prisma` prevent the omissions from being mistaken for drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only those documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
+The boards migration also maintains two PostgreSQL-only invariants that Prisma cannot represent: `board_name_not_empty` and the partial unique index `board_invitation_pending_board_email_key`. Phase 4a adds the raw `task_name_not_empty` check; phase 5a adds `task_description_length` and `task_dependency_not_self`. Phase 4b adds the composite foreign key from `task(boardId, assigneeId)` to `board_membership(boardId, userId)`, because Prisma cannot model the assignee column-specific `ON DELETE SET NULL` with the task’s required `boardId`. The committed migrations are the source of truth; matching comments in `schema.prisma` prevent omissions from being mistaken for drift. `pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema with a shadow database and allows only documented unsupported statements; CI runs it with `SHADOW_DATABASE_URL`.
+
 
 ## Identity delivery (phase 2)
 
@@ -188,7 +200,7 @@ The standard `pnpm test` suite intentionally does not require PostgreSQL, Redis,
 
 ## Boards and membership delivery (phase 3)
 
-The phase-3 slice is complete end to end: board creation and editing, membership reads, email invitations and cancellation, and the React screens that drive them. Favourites, tags, role changes/removal, invitation resend, roster export, audit logs, copy-link controls, and the task board itself remain deferred; the UI renders those controls as inert or omits them rather than faking behaviour.
+The phase-3 slice is complete end to end: board creation and editing, membership reads, email invitations and cancellation, and the React screens that drive them. Favourites, tags, role changes/removal, invitation resend, roster export, audit logs, copy-link controls, and the task board itself remain deferred; the UI omits those controls rather than rendering them inert or faking behaviour (see "Inert prototype controls are omitted" below).
 
 ### Endpoints and authorization
 
@@ -248,9 +260,9 @@ Routes are owned by `react-router` v7 with a session guard that resolves the Bet
 
 Server state lives in TanStack Query (`src/lib/api/*`), forms in React Hook Form resolved against the shared Zod contracts, and linkable roster filters in the URL search parameters. A thin `fetch` client sends same-origin cookie requests, validates every response with `packages/contracts`, maps RFC 9457 Problem Details to a typed `ApiError` (including field errors), distinguishes network and contract failures, and forwards `AbortSignal` so stale search and navigation requests are cancelled. `VITE_API_BASE_URL` overrides the same-origin default; Vite proxies `/api` in development and Nginx does in the container image, so no CORS configuration is needed.
 
-Board summaries carry `ownerId` plus a bounded `memberPreview` but no owner name, so "updated by" resolves the owner from that preview (or from the signed-in user when they own the board) and omits the name rather than asserting one it cannot verify. Roster and pending-invitation pages request the maximum bounded page size (100) and offer "Load more" when the API returns a cursor.
+Board summaries retain `ownerId` plus a bounded `memberPreview` for API consumers, but board cards omit update attribution and member avatars to keep the list focused on board identity and navigation. Roster and pending-invitation pages request the maximum bounded page size (100) and offer "Load more" when the API returns a cursor.
 
-Board creation is functional from both `Create New Board` controls: signed-in users provide a name and optional description, become the new board’s `ADMIN`, and are routed to its overview. Remaining deferred prototype controls are rendered inert or omitted, never faked: `SYNCED` and `New Task` in the shell, `Export Roster`, favourites, tags, the row overflow menu, role selects and member removal, invitation resend, `Copy Invite Link`, the audit log, and default board permissions.
+Board creation is functional from both `Create New Board` controls: signed-in users provide a name and optional description, become the new board’s `ADMIN`, and are routed to its overview. Remaining deferred prototype controls are omitted rather than rendered inert (see "Inert prototype controls are omitted" below): `SYNCED`, `Export Roster`, favourites, tags, the row overflow menu, role selects and member removal, invitation resend, `Copy Invite Link`, the audit log, and default board permissions.
 
 Static Figma assets are committed verbatim under `apps/web/src/assets/boards/` and `apps/web/src/assets/members/` (for example `1-838/12237.svg` → `assets/boards/plus-white.svg` → Create New Board/New Task, and `1-1531/a3435.svg` → `assets/members/roster-search.svg` → roster search field). Prototype photography is not shipped: every avatar is rendered locally from the server-generated `avatarSeed` through the shared `Avatar` component using bundled DiceBear code, and `IdentityPanel` from phase 2 was replaced by the shell account menu.
 
@@ -258,7 +270,7 @@ Static Figma assets are committed verbatim under `apps/web/src/assets/boards/` a
 
 ## Task board delivery (phase 4a)
 
-Phase 4a is the first Kanban slice: a board screen with three active columns, task creation, editing, movement, and deletion for name, status, and priority, plus optimistic concurrency. Phase 4b subsequently adds assignee, reporter, and due-date metadata to its cards and replaces the interim dialog; dependencies, attachments, descriptions, and recurrence remain later phases.
+Phase 4a is the first Kanban slice: a board screen with three active columns, task creation, editing, movement, and deletion for name, status, and priority, plus optimistic concurrency. Phase 4b subsequently adds assignee and due-date metadata to its cards and replaces the interim dialog; dependencies, attachments, descriptions, and recurrence remain later phases.
 
 ### Routes
 
@@ -289,9 +301,9 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 ### Web behaviour
 
 - Optimistic mutations: moving, editing, and deleting write into the TanStack Query cache immediately, restore the exact snapshot when the request fails, and always reconcile with the server afterwards. A `409` reloads the authoritative task and announces the conflict.
-- Two entry points: the board's own **New Task** control and the shell CTA, which is enabled whenever a board screen supplies a handler and stays disabled elsewhere. Focus returns to whichever control opened the dialog.
+- Two entry points: the board's own **New Task** control and the shell CTA, which is rendered only when a board screen supplies a handler (see "Inert prototype controls are omitted" below) and is otherwise omitted. Focus returns to whichever control opened the dialog.
 - Card affordance: the card is one pointer target, so the whole block shows `cursor: pointer` and hovering tints only its border. The title keeps its type and is never underlined, and keyboard focus keeps the visible ring.
-- Card interaction: a single click anywhere on a card opens the designed edit modal, which owns name, status, priority, assignee, reporter, due date, and deletion (confirmed in a second dialog). The frame's per-card overflow menu remains deliberately absent.
+- Card interaction: a single click anywhere on a card opens the designed edit modal, which owns name, status, priority, assignee, due date, and deletion (confirmed in a second dialog). The frame's per-card overflow menu remains deliberately absent.
 - Movement and its feedback: pointer dragging uses `@dnd-kit/core` with a distance threshold. The original card stays in its column, dimmed, as the place it left, and a drag overlay follows the pointer.
 - Live drop target: the column under the pointer is highlighted while a card is held — an accent wash, an accent border, and an inset ring, so the state is not carried by colour alone — and only that column is highlighted. An empty column's dashed placeholder joins the highlight, so the target reads as one surface.
 - No drop animation: the card genuinely relocates to another column, and animating the overlay back to the source looked like a snap-back. The card that landed is highlighted briefly instead.
@@ -318,26 +330,22 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 
 ## People and dates delivery (phase 4b)
 
-Phase 4b extends the Kanban slice with an optional assignee, required reporter, and optional due date. Both people must be active members of the task's own board. Reporter defaults to the caller; every board role may choose any member for either field. The designed create (`1:1045`) and edit (`1:479`) modals replace the phase 4a interim dialog.
+Phase 4b extends the Kanban slice with an optional assignee and optional due date. The designed create (`1:1045`) and edit (`1:479`) modals replace the phase 4a interim dialog.
 
 ### Persistence, contract, and authorization
 
-- Migration `20270501000000_task_people_and_dates` adds nullable `assigneeId`, required `reporterId` (backfilled from `createdById`), and nullable PostgreSQL `DATE` `dueDate`, plus board/assignee and board/date indexes.
-- Service checks run inside the write transaction. PostgreSQL composite foreign keys independently enforce same-board membership: removing an assignee membership clears `assigneeId`; reporter membership cannot be removed while referenced. A board deletion still cascades through its tasks.
-- Create defaults reporter to the caller and accepts an optional assignee/date. PATCH remains a full-state, versioned update, so drag moves preserve people and date. Invalid selections return `422 TASK_ASSIGNEE_NOT_MEMBER` or `422 TASK_REPORTER_NOT_MEMBER`.
-- Task responses embed safe assignee/reporter previews and serialize due dates as strict `YYYY-MM-DD` strings.
+- Task responses embed safe assignee previews and serialize due dates as strict `YYYY-MM-DD` strings.
 
 ### Accepted decisions
 
-- **Any member may choose any reporter.** Choice: authorization depends on active membership rather than role. Reason: contributors already manage tasks and reporter assignment is task metadata, not board administration. Consequence: UI and API expose the complete active roster to every board member; both layers still reject users outside the board.
 - **Due dates are calendar dates.** Choice: store PostgreSQL `DATE`, not a UTC timestamp. Reason: a due date names a day and must not shift when viewed in another timezone. Consequence: API values are `YYYY-MM-DD`; the web computes `days left`, `Due today`, and `overdue` against the viewer's local calendar day. UTC remains authoritative for actual timestamps.
 - **Radix provides behavior only.** `@radix-ui/react-dialog`, `react-select`, and `react-popover` provide focus, layering, and keyboard semantics; Sass Modules and repository tokens own every visual style.
 - **Later modal sections are omitted.** Tags, projects, and attachments are not rendered as fake controls. Phase 5a added the description and dependency sections.
 
 ### Web behavior
 
-- The create modal supports status, priority, assignee, reporter, due date, validation, and **Create more**, which resets only the title while keeping selected properties.
-- The edit modal shows the board/task breadcrumb, saved/dirty state, expand/close controls, created/updated metadata, **Discard changes**, versioned **Save changes**, Ctrl/Cmd+Enter submission, and confirmed deletion.
+- The create modal supports status, priority, assignee, due date, validation, and **Create more**, which resets only the title while keeping selected properties.
+- The edit modal shows the board/task breadcrumb, unsaved-change state, expand/close controls, created/updated metadata, **Discard changes**, versioned **Save changes**, Ctrl/Cmd+Enter submission, and confirmed deletion.
 - A `409` keeps the modal open and offers **Reload latest**; reloading replaces the form and baseline version before another save. A stale member `422` marks the relevant person pill and refreshes member data through the normal query lifecycle.
 - Cards show assignee identity and due date. `Overdue` is written as text as well as tinted, so meaning is not carried by color alone.
 - Dialogs are full-screen sheets below 40rem, property pills wrap, focus returns to the opener, and reduced-motion preferences disable modal transitions.
@@ -378,7 +386,7 @@ Only a newly added edge can close a cycle. When an update adds edges, the reposi
 - **The cycle check outranks the status gate.** Choice: one request that both moves into a gated status and closes a loop reports `TASK_DEPENDENCY_CYCLE`. Reason: a loop can never be satisfied, so naming it is more useful than reporting prerequisites the caller cannot complete. Consequence: the cycle walk runs before the settledness check in the same transaction.
 - **Markdown library.** Choice: `react-markdown` 10.1.0 + `remark-gfm` 4.0.1, pinned, rather than a hand-written sanitizer. Reason: the library builds React elements and never uses `dangerouslySetInnerHTML`, and disabling HTML is one option. Consequence: about 1,100 lockfile lines of unified/micromark dependencies.
 - **Board-row lock for graph writes.** Choice: lock the board row, as sequence allocation already does, rather than use SERIALIZABLE isolation. Reason: the invariant spans many rows and is board-scoped. Consequence: dependency-adding updates on one board serialize; updates that add no edge are unaffected.
-- **Figma coverage.** The edit modal `1:479` could not be re-inspected during 5a because the Figma MCP Starter-plan call limit had been reached. The card pill follows the cached `1:128` design context. The modal sections reuse the existing modal/pill tokens and should be compared against `1:479` during release hardening.
+- **Figma coverage.** The edit modal `1:479` could not be re-inspected during 5a because the Figma MCP Starter-plan call limit had been reached. The card pill follows the cached `1:128` design context. The modal sections reuse the existing modal/pill tokens. This was resolved during release hardening (phase 7) as an explicit user-authorized scope change: phase 7 does not perform a full per-screen Figma comparison (see "Figma comparison scope for release hardening" above), so the `1:479` re-inspection remains descoped rather than completed.
 
 ### Verification scope
 
@@ -534,13 +542,63 @@ Swagger UI at `http://localhost:8080/api/docs` is added with the application Ope
 
 Compose health checks and `depends_on: condition: service_healthy` will gate startup. Named volumes persist PostgreSQL, Redis, and MinIO data. The migration job must succeed before API/worker startup. Images run as non-root users and receive configuration through environment variables. Better Auth runs in `api`; local OAuth callbacks use the public URL (for example `http://localhost:8080/api/v1/auth/callback/...`), never an internal Compose hostname. Social providers remain disabled when their client credentials are absent.
 
+## Operations runbook
+
+### First run
+
+1. Copy `.env.example` to `.env` (Compose) and `apps/api/.env.example` to `apps/api/.env` (local dev servers); the safe local defaults require no edits to start.
+2. `docker compose up --build` runs `postgres`, `redis`, `minio`/`minio-init`, `mailpit`, the one-shot `migrate` job, `api`, `worker`, and `web`.
+3. Wait for `migrate` to exit successfully (Compose health checks and `depends_on: condition: service_healthy`/`service_completed_successfully` gate the rest of the stack). It applies every committed Prisma migration with `prisma migrate deploy` and, only when `SEED_DEMO_DATA=true` (the checked-in root `.env.example` default), runs the deterministic seed.
+4. Open `http://localhost:8080`.
+
+### Environment variables
+
+Every variable the API's Zod environment schema (`apps/api/src/config/env.ts`) validates is listed in both `apps/api/.env.example` (local dev servers) and the root `.env.example` (Compose); the two files stay in sync with the schema so a missing variable fails fast at startup with a named issue rather than a silent default drifting from what is documented. `NODE_ENV=production` additionally requires `BETTER_AUTH_SECRET` (not the built-in development value), `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_SECURE_COOKIES`, `SMTP_HOST`, `MAIL_FROM`, and the database/Redis/S3 connection variables.
+
+### Migrations and seeding
+
+- Apply committed migrations with `pnpm db:migrate` (local) or the Compose `migrate` job; never use `prisma db push` outside disposable experiments.
+- `pnpm db:seed` (or the Compose `migrate` job with `SEED_DEMO_DATA=true`) creates a deterministic, clearly non-production demo dataset. `ALLOW_PRODUCTION_DEMO_SEED` must be explicitly `true` for the seed to run when `NODE_ENV=production`, guarding against seeding a real deployment by accident.
+- `SHADOW_DATABASE_URL=... pnpm --filter @ksat/api db:migrate:diff` compares the Prisma schema against a shadow database and allows only the documented unsupported raw-SQL statements (partial unique index, raw CHECK constraints, composite foreign keys); CI runs this in the `database` job.
+
+### Logs, health, and readiness
+
+- The API and worker log structured JSON (Pino) to stdout, which Docker/Compose captures; `docker compose logs -f api worker` tails them.
+- `GET /health/live` reports process liveness without checking dependencies.
+- `GET /health/ready` (used by the `api` container health check) checks PostgreSQL, Redis, and MinIO reachability and returns `503` with the failing dependency named if any check fails.
+- The `worker` container's health check only confirms the process is alive (`kill -0 1`); watch its logs for BullMQ job failures, since a wedged worker still reports healthy.
+
+### Worker behavior and restart
+
+The `worker` container runs the same image as `api` with the `node dist/src/worker.js` command. It processes the BullMQ recurrence queue, generating scheduled occurrences idempotently (each scheduled instant is recorded before/while generating its task, so redelivery cannot duplicate a task). Restarting the worker (`docker compose restart worker`) is safe at any time: in-flight jobs are retried by BullMQ's backoff policy, and the idempotency record prevents duplicate occurrences after the restart.
+
+### Backups
+
+- **PostgreSQL** is authoritative for all durable data. Back up the `postgres_data` named volume, or preferably run `pg_dump`/point-in-time recovery against the running `postgres` service on a schedule appropriate for the deployment; a volume snapshot alone can capture a database mid-write.
+- **MinIO** stores attachment bytes; the `minio_data` named volume (or the underlying object storage in a non-Compose deployment) needs its own backup policy, matched to the retention the PostgreSQL `attachment` metadata table expects. Losing MinIO data without also invalidating the corresponding PostgreSQL rows leaves dangling metadata for objects that no longer exist.
+- Redis holds only caches, rate-limit counters, queue state, and Better Auth secondary session storage; it does not need a backup policy; a fresh, empty Redis is always a safe start.
+
+### Rotating the Better Auth secret
+
+Rotating `BETTER_AUTH_SECRET` invalidates every existing session cookie (Better Auth signs session tokens with this secret), so plan rotation for a maintenance window or accept that all users are signed out. Generate a new high-entropy value (at least 32 characters), set it as the new `BETTER_AUTH_SECRET`, and restart the `api` and `worker` containers together so no process verifies cookies against a stale secret.
+
+### Troubleshooting common failures
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| `migrate` job exits non-zero and `api`/`worker` never start | A migration failed against the current schema state, or PostgreSQL was not yet healthy | Check `docker compose logs migrate`; fix the migration or wait for PostgreSQL's health check before retrying `docker compose up` |
+| Attachment uploads fail with a storage error | The `ksat` MinIO bucket does not exist yet | Confirm `minio-init` ran successfully (`docker compose logs minio-init`); it is idempotent and can be re-run with `docker compose up minio-init` |
+| Invitation emails never appear | Mailpit is not reachable, or `SMTP_HOST`/`SMTP_PORT` point elsewhere | Check `docker compose logs mailpit` and confirm `SMTP_HOST=mailpit`/`SMTP_PORT=1025` in the `api`/`worker` environment; the invitation API call still succeeds and reports `emailDelivery: "FAILED"` rather than failing the request |
+| Login/invite/board actions intermittently return `429` beyond expected limits, or rate limits reset unexpectedly across replicas | Redis is down or unreachable, so rate limiting falls back to a bounded per-process memory map | Check `docker compose logs redis` and `redis-cli ping`; once Redis recovers, limits return to the shared, cross-replica counters. This is a deliberate degrade-safe fallback, not a bug |
+
 ## Testing strategy
 
 - **Unit:** domain rules, recurrence calculations, authorization decisions, validators, cache-key/invalidation logic, and React components.
 - **API integration:** Express app factory + Supertest against isolated PostgreSQL/Redis/MinIO test dependencies; test Better Auth credential/session flows and both allowed and forbidden application paths. Social-provider tests use mocked provider responses.
-- **Contract:** generated application OpenAPI snapshot, Better Auth route-reference availability, and representative request/response schemas.
-- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion; phase 5a adds a Markdown description (raw HTML not rendered), a searched dependency shown on the card, a rejected reverse cycle, and the full-screen sheet at 375px; phase 6 adds seeded recurrence pause/resume coverage.
-- **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions.
+- **Contract:** generated application OpenAPI snapshot, an OpenAPI coverage test (`apps/api/tests/openapi-coverage.test.ts`) that parses every `router.<method>(...)` registration from `routes.ts` and fails if a route is not documented or a `$ref` cannot be resolved, Better Auth route-reference availability, and representative request/response schemas.
+- **Accessibility:** `e2e/accessibility.spec.ts` runs `@axe-core/playwright` (`wcag2a`/`wcag2aa`/`wcag21aa`) against login/signup, the boards list (empty and populated), the create-board dialog, the task board with a task, the new-task and edit-task modals, board settings, the members page, and the invitation preview, plus a `prefers-reduced-motion` pass and a keyboard/arrow-key check of the sign-up/log-in radio group. The audit found and fixed real WCAG AA color-contrast failures (see "Key decisions" in the phase-7 note); it does not exclude any rule.
+- **Browser:** Playwright journeys under `e2e/`. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion; phase 5a adds a Markdown description (raw HTML not rendered), a searched dependency shown on the card, a rejected reverse cycle, and the full-screen sheet at 375px; phase 6 adds seeded recurrence pause/resume coverage; phase 7 adds `e2e/membership.spec.ts` (invite by email, Mailpit link retrieval, signup-and-accept, and the read-only invitation panel for a non-manage member), extends `e2e/task-board.spec.ts` with search/filter narrowing, URL-persisted filters across a reload, archive/restore, attachment upload/open/removal, and a sign-out/sign-in journey, and adds `e2e/accessibility.spec.ts`.
+- **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions. Release hardening (phase 7) explicitly did not repeat this comparison for every screen; see the decision note under "Explicitly deferred".
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
 
@@ -584,13 +642,13 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 3. **Boards and membership (complete)** — board creation/list/detail, admin board editing, seeded demo board, member list, invitations, Mailpit flow, authorization, and the responsive web screens with invitation acceptance.
 4. **Kanban walking skeleton**
    - **4a — Task board (complete):** task board page (`1:128`); create, edit, and delete tasks with name, status, and priority; move tasks between columns; optimistic concurrency. Also adds CI and the first Playwright journey: sign up → create board → create task → move it.
-   - **4b — People and dates (complete):** assignee and reporter limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
+   - **4b — People and dates (complete):** assignee limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
    - **4c — Finding work (complete):** URL-backed name/sequence search; assignee, priority, status, and viewer-local due filters; due-date/priority/newest/oldest/name sorting; archive/restore with an explicit show-archived toggle; keyset pagination and stale-search cancellation.
 5. **Task detail**
    - **5a — Content and dependencies (complete):** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
    - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.
 6. **Recurring work (complete)** — guided and advanced RRULE editing, timezone-aware queue/worker generation, idempotency, bounded catch-up, recurrence tests, a real BullMQ/PostgreSQL smoke path, and a seeded Playwright journey.
-7. **Release hardening** — full accessibility audit, Figma comparison of every screen, OpenAPI review, operational documentation, and a complete end-to-end suite.
+7. **Release hardening (complete)** — unusable prototype controls omitted (not rendered inert); an accessibility audit with axe and manual keyboard/reduced-motion checks, including real contrast fixes; an OpenAPI coverage test that fails if a route is removed from the registry; operational runbook documentation; and a complete Playwright suite (boards, tasks, membership/invitations, recurrence). A full per-screen Figma re-comparison was explicitly descoped for this phase (see the decision note above); only screens touched in this phase were checked in a browser.
 
 After the MVP: role changes, member removal, invitation resend, roster export, favourites, tags, and audit logs.
 
@@ -608,3 +666,7 @@ These choices are accepted defaults for implementation, not irreversible constra
 ## Agent guidance
 
 Repository-wide rules live in [`AGENTS.md`](AGENTS.md). Pi also discovers the project workflow skill at [`.pi/skills/todo-app-workflow/SKILL.md`](.pi/skills/todo-app-workflow/SKILL.md). Future agents should read both before changing code.
+
+### Task attribution field removal
+
+Reporter was removed from the task model and UI. Choice: keep task creator and optional assignee only; reason: the field had no product behaviour or notification use. Consequence: existing reporter data is dropped by migration `20270801000000_remove_task_reporter`.
