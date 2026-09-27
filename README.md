@@ -12,7 +12,7 @@ A collaborative TODO board application designed from the supplied [Figma file](h
 - List the boards the current user belongs to.
 - Show a board as a Kanban view with `Not Started`, `In Progress`, and `Completed` columns.
 - Keep `Archived` tasks hidden unless explicitly shown.
-- Search tasks and filter/sort by assignee, priority, status, and due date.
+- Search tasks and filter/sort by assignee, priority, status, blocking state, and due date.
 - Create, read, update, archive, and delete tasks.
 - Task fields:
   - name and Markdown description;
@@ -87,7 +87,7 @@ Before implementing a screen, retrieve that exact node through the Figma MCP, re
 | Cache/queues | Redis for Better Auth secondary storage, rate limits, BullMQ jobs, and bounded read-through caches | Gives Redis concrete responsibilities while PostgreSQL remains the durable source of truth. |
 | Attachments | S3-compatible object storage; MinIO in local Compose | Keeps blobs out of PostgreSQL and makes local behavior match a common production storage contract. |
 | Email | Nodemailer over SMTP; Mailpit in local Compose | Invitations can be exercised locally without an external vendor. |
-| Recurrence | RFC 5545 RRULE + IANA timezone, expanded by an idempotent BullMQ worker | Avoids inventing a recurrence format and handles daylight-saving behavior explicitly. |
+| Recurrence | RFC 5545 RRULE + IANA timezone; the next occurrence is created in the transaction that completes a recurring task | Avoids inventing a recurrence format, handles daylight-saving behavior explicitly, and matches the brief's completion trigger (see "Recurrence trigger (phase 8)"). |
 | Tests | Vitest everywhere, Supertest for API HTTP tests, Testing Library + MSW for React, Playwright for critical journeys | One fast unit-test runner plus focused integration and browser coverage. |
 | Observability | Pino structured logs, request IDs, `/health/live`, and dependency-aware `/health/ready` | Useful Docker diagnostics without introducing a full telemetry stack. |
 
@@ -162,6 +162,29 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 - **TaskSchedule** — template task, RRULE, timezone, start/end values, next run, enabled flag.
 - **ScheduleOccurrence** — schedule, scheduled instant, generated task; unique on schedule + instant for idempotency.
 
+### Task lifecycle
+
+```mermaid
+stateDiagram-v2
+  state "Visible (deletedAt IS NULL)" as Visible {
+    [*] --> NOT_STARTED: create (default)
+    NOT_STARTED --> IN_PROGRESS: gated
+    IN_PROGRESS --> COMPLETED: gated
+    COMPLETED --> ARCHIVED: archive
+    ARCHIVED --> NOT_STARTED: restore
+  }
+  state "Soft-deleted (deletedAt set)" as Deleted
+  [*] --> Visible
+  Visible --> Deleted: "DELETE ?version"
+  Deleted --> Visible: "task:restore (status unchanged)"
+```
+
+- Arrows show the usual flow. The versioned PATCH can move a task from any status to any other.
+- **Gated:** moving into `IN_PROGRESS` or `COMPLETED` requires every prerequisite to be settled (`COMPLETED`, `ARCHIVED`, or soft-deleted); otherwise `422 TASK_DEPENDENCIES_INCOMPLETE`. `NOT_STARTED` and `ARCHIVED` are always reachable. Create accepts any status except `ARCHIVED` (default `NOT_STARTED`), under the same gate.
+- `ARCHIVED` tasks are hidden from board reads unless `includeArchived=true`.
+- The first move of a recurring task into `COMPLETED` also creates a new `NOT_STARTED` occurrence task; the completed task keeps its status.
+- `DELETE` soft-deletes from any status, and the task then reads as `404`. The engineer-only `task:restore` clears `deletedAt` and keeps the status.
+
 ### Invariants
 
 - A task, its assignee, and every dependency belong to the same board.
@@ -169,10 +192,12 @@ All IDs are UUIDv7 values. Timestamps are stored in UTC and serialized as ISO 86
 - A task cannot move into `IN_PROGRESS` or `COMPLETED` while any dependency is still `NOT_STARTED` or `IN_PROGRESS`. `COMPLETED` and `ARCHIVED` dependencies are settled.
 - Only active board members can read board data. Contributors manage tasks; managers/admins manage membership and invitations; only admins perform destructive board operations.
 - `ARCHIVED` is a task state and is excluded from list queries by default. Deletion is a separate, explicit operation.
+- DELETE is recoverable soft deletion: normal reads hide the row, while dependencies, attachments, and recurrence metadata remain retained for engineer-operated recovery. The guarded command is `pnpm --filter @ksat/api task:restore -- <task-uuid>`; there is no user-facing trash or restore flow in the MVP.
 - Task updates include a `version`; stale updates return `409 Conflict` rather than silently overwriting another edit.
+- Completion-triggered recurrence is created in the same transaction as the successful move to `COMPLETED`. The next occurrence follows the RRULE's scheduled cadence, skips missed intervals, and is protected by the schedule/instant uniqueness constraint.
 - Recurrence edits affect future generated occurrences. Existing occurrences remain historical records.
-- The worker records each scheduled instant before/while generating its task so retries cannot create duplicates.
-- Attachments are deleted asynchronously after their database record/task is removed.
+- Completion records each occurrence instant (unique per schedule) in the same transaction that creates its task, so retries and concurrent completions cannot create duplicates.
+- Removing an attachment deletes its metadata and asynchronously cleans its object; soft-deleting a task does not enqueue attachment cleanup, so related data remains recoverable.
 
 Prisma migrations are the only way to change shared schemas. `prisma db push` is not used outside disposable experiments. PostgreSQL’s `citext` and `pg_trgm` extensions may be enabled by migration for normalized email and task search.
 
@@ -280,7 +305,7 @@ Phase 4a is the first Kanban slice: a board screen with three active columns, ta
 | `/boards/:boardId/settings` | Board overview (phase 3) | Board metadata, membership summary, and the admin edit panel moved here when the board route became the Kanban board. |
 | `/boards/:boardId/members` | Board members (Figma `1:1531`) | Unchanged. |
 
-Phase 4c makes the control strip functional: search, assignee/priority/status/due filters, sorting, and the explicit show-archived toggle are URL-backed and shareable. `ARCHIVED` tasks remain excluded unless `includeArchived=true`; when shown, they occupy a fourth Archived column.
+Phase 4c makes the control strip functional: search, assignee/priority/status/due/blocking filters, sorting, and the explicit show-archived toggle are URL-backed and shareable. `ARCHIVED` tasks remain excluded unless `includeArchived=true`; when shown, they occupy a fourth Archived column. Board reads remain keyset-paginated and never fetch an unbounded task set.
 
 ### Endpoints and authorization
 
@@ -290,7 +315,7 @@ Phase 4c makes the control strip functional: search, assignee/priority/status/du
 | POST | `/api/v1/boards/:boardId/tasks` | Active board member | 201 created task |
 | GET | `/api/v1/tasks/:taskId` | Active board member | 200 task detail |
 | PATCH | `/api/v1/tasks/:taskId` | Active board member | 200 updated task, including a status move |
-| DELETE | `/api/v1/tasks/:taskId?version=` | Active board member | 204 deleted |
+| DELETE | `/api/v1/tasks/:taskId?version=` | Active board member | 204 soft-deleted; retained data can be restored by an engineer |
 
 Every board role — including `CONTRIBUTOR` — may manage tasks; only active membership is required, and the repository constrains each query by membership rather than trusting a caller-supplied id. Unknown boards and unknown tasks are indistinguishable `404`s (`BOARD_NOT_FOUND`, `TASK_NOT_FOUND`). Mutations keep the trusted-origin check and per-user Redis rate limits (create 120/hour, update 600/hour, delete 120/hour).
 
@@ -310,7 +335,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 - No drag auto-scroll: `DndContext` runs with `autoScroll={false}`, so a card can be carried anywhere on screen — including outside the board — without the page or the column row scrolling underneath it. The trade-off is deliberate: on narrow screens the column row has to be scrolled to a column before dropping onto it.
 - The keyboard-equivalent path is opening the card and changing its **Column** field, which moves the task the same way.
 - Movement, edit, and delete results are reported in a success toast (`Moved “…” to In Progress.`, `Saved “…”.`, `Deleted “…”.`) instead of an inline paragraph. This is intentional feedback rather than placeholder copy: pointer and drag results are visual, so the same text tells keyboard and screen-reader users whether the change succeeded. The toast is portaled to the document body, so it never displaces the board or joins its scroll containers, and it keeps its `role=status`/`role=alert` regions mounted so assistive technology announces every message. Confirmations auto-dismiss after five seconds, pausing while the pointer or focus is inside; rejections stay until they are dismissed, and the dismiss target meets the 24px minimum target size.
-- Control strip: search, assignee/priority/status/due filters, sorting, the archive toggle, and the primary CTA share one `--control-height` token so the strip aligns. Filter state is URL-backed; `/` focuses search and stale searches are cancelled.
+- Control strip: search, assignee/priority/status/due/blocking filters, sorting, the archive toggle, and the primary CTA share one `--control-height` token so the strip aligns. Filter state is URL-backed; `/` focuses search and stale searches are cancelled.
 - Responsive columns: columns use the 389px design width, shrink to a 20rem minimum to share a narrower viewport, and the row scrolls horizontally below that so the page itself never scrolls sideways. Reduced-motion preferences disable the arrival highlight and the column transition.
 - Testing Library/MSW coverage covers loading, empty, error/retry, not-found, validation, delete confirmation, optimistic rollback, conflict recovery, click-to-edit focus return, and the toast lifecycle (persistent live regions, auto-dismiss, hover pause, dismissal); the control-height alignment, hover border, and pointer cursor are asserted in the browser journey.
 
@@ -327,6 +352,35 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 ### Seed
 
 `pnpm db:seed` (and the Compose `migrate` job when `SEED_DEMO_DATA=true`) creates a deterministic task set across the demo boards, including one recurring template and one `ARCHIVED` row that demonstrates its exclusion from board reads. Each board's `nextTaskSequence` is set just past the seeded sequences so tasks created later never collide with them.
+
+### Volume seed (large dataset)
+
+For reviewing performance, filters, and pagination at scale, an explicit command generates a large, deterministic, clearly non-production dataset. It never runs from the Compose `migrate` job.
+
+```bash
+pnpm db:migrate
+pnpm db:seed:volume                        # defaults: 200 users, 21 boards, 15,000 tasks
+pnpm db:seed:volume -- --users=1000 --large-board-tasks=50000 --reset
+pnpm db:seed:volume -- --help
+
+# Compose stack
+docker compose run --rm migrate node dist/src/seed-volume.js --users=500
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `--users` | 200 (max 5,000) | Users `volume.user.0001@example.test` … |
+| `--boards` | 20 (max 500) | Additional boards with 3–25 members each |
+| `--large-board-tasks` | 10,000 (max 100,000) | Tasks on the large board, which every volume user joins |
+| `--tasks-per-board` | 250 (max 10,000) | Tasks on each additional board |
+| `--reference-date` | today (UTC) | Anchor for due/created dates, so overdue/today/next-7-days filters stay meaningful |
+| `--dataset` | 0 | Independent id range, for side-by-side datasets |
+| `--reset` | off | Deletes this dataset's boards (tasks, memberships, edges, schedules) before seeding; users are kept |
+
+- **Sign in** as `volume.user.0001@example.test` (admin of the large board, member of every volume board) or any other volume user, with the demo password `ksat-demo-password-2027`.
+- **Data shape:** mixed statuses and priorities, ~70% assigned, ~75% with due dates from 20 days overdue to 60 days ahead, Markdown descriptions, backward-only prerequisite edges on `NOT_STARTED` tasks (both blocked and unblocked), a few weekly recurring templates, and ~1% soft-deleted rows that stay hidden but restorable.
+- **Users** are created through Better Auth's internal adapter with a credential account; the Argon2id hash is computed once and shared, so thousands of users take seconds.
+- **Idempotent and safe:** every row has a deterministic id and is inserted with `ON CONFLICT DO NOTHING`; each board is written in its own transaction; board counters are only raised, so tasks created in the app afterwards never collide. A re-run reports `0 inserted`. The default run takes about 7 seconds locally. Production refuses the command unless `ALLOW_PRODUCTION_DEMO_SEED=true`.
 
 ## People and dates delivery (phase 4b)
 
@@ -390,7 +444,7 @@ Only a newly added edge can close a cycle. When an update adds edges, the reposi
 
 ### Verification scope
 
-Contract tests cover description normalization and limits and the dependency-id bounds. Service tests cover the self-dependency and 422 mappings. PostgreSQL integration tests cover ordered previews, cross-board and unknown ids, direct and transitive cycles, the concurrent opposite-edge race, stale-version preservation, cascade on delete, the raw CHECK constraints, gated `IN_PROGRESS` and `COMPLETED` moves, an archived prerequisite that settles without losing its edge, an unchanged status staying editable after a prerequisite drifts back, and a cycle winning over the status gate. Testing Library/MSW covers Markdown formatting controls, the Preview toggle, dependency guidance, sanitized rendering, incomplete-prerequisite and cycle-error recovery, and the archived state shown on a prerequisite chip. Playwright verifies a rejected pointer move rolls back with a visible error. The seed adds deterministic descriptions and two same-board edges.
+Contract tests cover description normalization and limits and the dependency-id bounds. Service tests cover the self-dependency and 422 mappings. PostgreSQL integration tests cover ordered previews, cross-board and unknown ids, direct and transitive cycles, the concurrent opposite-edge race, stale-version preservation, soft-delete retention, the raw CHECK constraints, gated `IN_PROGRESS` and `COMPLETED` moves, an archived prerequisite that settles without losing its edge, an unchanged status staying editable after a prerequisite drifts back, and a cycle winning over the status gate. Testing Library/MSW covers Markdown formatting controls, the Preview toggle, dependency guidance, sanitized rendering, incomplete-prerequisite and cycle-error recovery, and the archived state shown on a prerequisite chip. Playwright verifies a rejected pointer move rolls back with a visible error. The seed adds deterministic descriptions and two same-board edges.
 
 ### Attachments delivery (phase 5b)
 
@@ -407,6 +461,18 @@ The default limit is 10 MiB per file and 50 MiB per task, configurable through `
 
 The task modal follows `phase-notes/phase-5b-modals.png`: create mode stages files behind the compact Attach/upload action; edit mode shows **Attached specs & files**, usage against the 50 MiB cap, compact file tiles, and upload/open/remove controls. Attachments do not inflate board task cards.
 
+
+## Recurrence trigger (phase 8)
+
+- **Choice:** when a recurring task moves into `COMPLETED`, the same transaction creates exactly one next `NOT_STARTED` occurrence; the time-based BullMQ recurrence worker is no longer started.
+- **Reason:** the brief requires completion-triggered recurrence; generating on a clock created occurrences whether or not the work was done.
+- **Consequence:** the next occurrence uses the first scheduled instant after both the current occurrence and now, so missed intervals are skipped rather than backfilled. Duplicate or concurrent completions are suppressed by the `(scheduleId, scheduledAt)` unique constraint. Exhausted, disabled, archived, or deleted schedules generate nothing. `apps/api/src/modules/tasks/recurrence.worker.ts` is currently unused.
+
+## Large-board performance
+
+Task lists use server-side keyset pagination, active-task indexes, and bounded page sizes. The web board virtualizes each column with `@tanstack/react-virtual`, so loading additional pages does not mount all 10,000+ cards in the DOM. Search, blocking filters, sorting, and due-date filters are evaluated by PostgreSQL before pagination; optimistic mutations update only cached pages and settle with an authoritative refetch.
+
+The implementation is intended for 10,000+ task boards; a production-like load benchmark should still be run against the deployment database and browser profile before setting an operational latency budget.
 
 ## API conventions
 
@@ -570,7 +636,7 @@ Every variable the API's Zod environment schema (`apps/api/src/config/env.ts`) v
 
 ### Worker behavior and restart
 
-The `worker` container runs the same image as `api` with the `node dist/src/worker.js` command. It processes the BullMQ recurrence queue, generating scheduled occurrences idempotently (each scheduled instant is recorded before/while generating its task, so redelivery cannot duplicate a task). Restarting the worker (`docker compose restart worker`) is safe at any time: in-flight jobs are retried by BullMQ's backoff policy, and the idempotency record prevents duplicate occurrences after the restart.
+The `worker` container runs the same image as `api` with the `node dist/src/worker.js` command. It processes the BullMQ attachment object-cleanup queue and periodically re-sweeps the durable `ObjectCleanup` outbox. Recurrence no longer runs in the worker: occurrences are created by the task-completion transaction. Restarting the worker (`docker compose restart worker`) is safe at any time: in-flight jobs are retried by BullMQ's backoff policy and pending outbox rows are picked up again.
 
 ### Backups
 
@@ -643,12 +709,13 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 4. **Kanban walking skeleton**
    - **4a — Task board (complete):** task board page (`1:128`); create, edit, and delete tasks with name, status, and priority; move tasks between columns; optimistic concurrency. Also adds CI and the first Playwright journey: sign up → create board → create task → move it.
    - **4b — People and dates (complete):** assignee limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
-   - **4c — Finding work (complete):** URL-backed name/sequence search; assignee, priority, status, and viewer-local due filters; due-date/priority/newest/oldest/name sorting; archive/restore with an explicit show-archived toggle; keyset pagination and stale-search cancellation.
+   - **4c — Finding work (complete):** URL-backed name/sequence search; assignee, priority, status, blocking, and viewer-local due filters; due-date/priority/newest/oldest/name sorting; archive/restore with an explicit show-archived toggle; keyset pagination and stale-search cancellation.
 5. **Task detail**
    - **5a — Content and dependencies (complete):** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
    - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.
-6. **Recurring work (complete)** — guided and advanced RRULE editing, timezone-aware queue/worker generation, idempotency, bounded catch-up, recurrence tests, a real BullMQ/PostgreSQL smoke path, and a seeded Playwright journey.
+6. **Recurring work (complete)** — guided and advanced RRULE editing, timezone-aware schedules, completion-triggered occurrence creation, idempotent schedule/instant persistence, recurrence tests, and a seeded Playwright journey.
 7. **Release hardening (complete)** — unusable prototype controls omitted (not rendered inert); an accessibility audit with axe and manual keyboard/reduced-motion checks, including real contrast fixes; an OpenAPI coverage test that fails if a route is removed from the registry; operational runbook documentation; and a complete Playwright suite (boards, tasks, membership/invitations, recurrence). A full per-screen Figma re-comparison was explicitly descoped for this phase (see the decision note above); only screens touched in this phase were checked in a browser.
+8. **Assessment requirement alignment (complete)** — recoverable soft deletion with an engineer-only restore command, completion-triggered recurrence, blocked/unblocked filtering, virtualized board columns over keyset pagination, and a deterministic volume seed.
 
 After the MVP: role changes, member removal, invitation resend, roster export, favourites, tags, and audit logs.
 
