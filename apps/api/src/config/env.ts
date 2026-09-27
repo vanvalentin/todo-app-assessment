@@ -48,7 +48,13 @@ const environmentSchema = z.object({
     "postgresql://postgres:postgres@127.0.0.1:5432/ksat",
   ),
   REDIS_URL: urlWithProtocol(["redis", "rediss"]).default("redis://127.0.0.1:6379"),
-  S3_ENDPOINT: z.string().url().default("http://127.0.0.1:9000"),
+  // "static" uses S3_ACCESS_KEY_ID/S3_SECRET_ACCESS_KEY (MinIO, local); "iam" uses the AWS SDK
+  // default credential chain (ECS task role, EC2 instance profile) and the regional AWS endpoint.
+  S3_AUTH: z.enum(["static", "iam"]).default("static"),
+  S3_ENDPOINT: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().url().optional(),
+  ),
   S3_REGION: z.string().min(1).default("us-east-1"),
   S3_BUCKET: z.string().min(1).default("ksat"),
   S3_ACCESS_KEY_ID: z.string().min(1).optional(),
@@ -93,8 +99,10 @@ const environmentSchema = z.object({
 type ParsedEnvironment = z.infer<typeof environmentSchema>;
 export type Environment = Omit<
   ParsedEnvironment,
-  "BETTER_AUTH_SECURE_COOKIES" | "APP_PUBLIC_URL"
+  "BETTER_AUTH_SECURE_COOKIES" | "APP_PUBLIC_URL" | "S3_ENDPOINT"
 > & {
+  /** Undefined only with S3_AUTH=iam, where the SDK resolves the regional AWS endpoint. */
+  S3_ENDPOINT: string | undefined;
   BETTER_AUTH_SECURE_COOKIES: boolean;
   APP_PUBLIC_URL: string;
 };
@@ -112,9 +120,6 @@ export class EnvironmentValidationError extends Error {
 const productionRequiredKeys = [
   "DATABASE_URL",
   "REDIS_URL",
-  "S3_ENDPOINT",
-  "S3_ACCESS_KEY_ID",
-  "S3_SECRET_ACCESS_KEY",
   "BETTER_AUTH_URL",
   "BETTER_AUTH_SECRET",
   "BETTER_AUTH_TRUSTED_ORIGINS",
@@ -123,13 +128,20 @@ const productionRequiredKeys = [
   "MAIL_FROM",
 ] as const;
 
+const staticS3ProductionKeys = ["S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const;
+const localS3Endpoint = "http://127.0.0.1:9000";
+
 /** Parse a supplied record so startup and tests do not depend on process-global mutation. */
 export function parseEnvironment(input: Record<string, string | undefined>): Environment {
   if (input.NODE_ENV === "production") {
     if (input.BETTER_AUTH_SECRET === developmentAuthSecret) {
       throw new EnvironmentValidationError(["BETTER_AUTH_SECRET: must be a deployment secret"]);
     }
-    const missing = productionRequiredKeys.filter((key) => !input[key]);
+    const required =
+      input.S3_AUTH === "iam"
+        ? productionRequiredKeys
+        : [...productionRequiredKeys, ...staticS3ProductionKeys];
+    const missing = required.filter((key) => !input[key]);
     if (missing.length > 0) {
       throw new EnvironmentValidationError(
         missing.map((key) => `${key}: required when NODE_ENV is production`),
@@ -149,6 +161,8 @@ export function parseEnvironment(input: Record<string, string | undefined>): Env
     BETTER_AUTH_SECURE_COOKIES:
       result.data.BETTER_AUTH_SECURE_COOKIES ?? result.data.NODE_ENV === "production",
     APP_PUBLIC_URL: result.data.APP_PUBLIC_URL ?? result.data.BETTER_AUTH_URL,
+    S3_ENDPOINT:
+      result.data.S3_ENDPOINT ?? (result.data.S3_AUTH === "iam" ? undefined : localS3Endpoint),
   };
 }
 

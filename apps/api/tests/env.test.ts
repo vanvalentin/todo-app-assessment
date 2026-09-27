@@ -58,6 +58,29 @@ describe("environment validation", () => {
     ).toThrow(/BETTER_AUTH_SECRET/);
   });
 
+  const productionBase = {
+    NODE_ENV: "production",
+    DATABASE_URL: "postgresql://db/ksat",
+    REDIS_URL: "redis://cache",
+    BETTER_AUTH_URL: "https://app.example.com",
+    BETTER_AUTH_SECRET: "deployment-secret-with-at-least-32-characters",
+    BETTER_AUTH_TRUSTED_ORIGINS: "https://app.example.com",
+    BETTER_AUTH_SECURE_COOKIES: "true",
+    SMTP_HOST: "smtp.example.com",
+    MAIL_FROM: "Ksat <no-reply@example.com>",
+  };
+
+  it("requires static S3 credentials in production unless IAM role credentials are selected", () => {
+    expect(() => parseEnvironment(productionBase)).toThrow(
+      /S3_ACCESS_KEY_ID: required when NODE_ENV is production/,
+    );
+
+    const aws = parseEnvironment({ ...productionBase, S3_AUTH: "iam", S3_BUCKET: "ksat-prod" });
+    expect(aws.S3_AUTH).toBe("iam");
+    expect(aws.S3_ENDPOINT).toBeUndefined();
+    expect(parseEnvironment({}).S3_ENDPOINT).toBe("http://127.0.0.1:9000");
+  });
+
   it("rejects invalid ports and dependency URLs without exposing values", () => {
     try {
       parseEnvironment({ PORT: "70000", DATABASE_URL: "not-a-database-url" });
