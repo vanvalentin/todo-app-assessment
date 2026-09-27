@@ -1,0 +1,48 @@
+name: Infrastructure
+
+on:
+  pull_request:
+    paths:
+      - infra/**
+      - .github/workflows/infra.yml
+  push:
+    branches:
+      - master
+    paths:
+      - infra/**
+      - .github/workflows/infra.yml
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Terraform (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [shared, prod, preview]
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+          terraform_wrapper: false
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive
+
+      # No backend is initialised: this validates the configuration and never
+      # reads or changes deployed infrastructure.
+      - name: Validate the environment
+        run: |
+          env_dir=envs/${{ matrix.environment }}
+          terraform -chdir="$env_dir" init -backend=false -input=false
+          terraform -chdir="$env_dir" validate
