@@ -68,8 +68,10 @@ const task: Task = {
   boardId: summary.id,
   sequence: 1,
   name: "Curate photo prints",
+  description: null,
   status: "NOT_STARTED",
   priority: "MEDIUM",
+  dependsOn: [],
   assignee: null,
   reporter: { id: summary.ownerId, name: "Ada", avatarSeed: "seed" },
   dueDate: null,
@@ -595,6 +597,8 @@ describe("phase 4a task routes", () => {
         priority: "MEDIUM",
         assigneeId: null,
         dueDate: null,
+        description: null,
+        dependsOnIds: [],
       },
     });
     expect(response.body.name).toBe("New task");
@@ -696,6 +700,8 @@ describe("phase 4a task routes", () => {
         priority: "HIGH",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 1,
       });
@@ -708,6 +714,8 @@ describe("phase 4a task routes", () => {
         priority: "HIGH",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 1,
       },
@@ -736,6 +744,8 @@ describe("phase 4a task routes", () => {
         priority: "LOW",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 1,
       });
@@ -752,6 +762,8 @@ describe("phase 4a task routes", () => {
         priority: "HIGH",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 1,
       });
@@ -779,6 +791,8 @@ describe("phase 4a task routes", () => {
         priority: "LOW",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 1,
       });
@@ -806,6 +820,8 @@ describe("phase 4a task routes", () => {
         priority: "LOW",
         assigneeId: null,
         reporterId: task.reporter.id,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
         version: 2,
       });

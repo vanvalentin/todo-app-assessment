@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertDemoSeedAllowed, demoTasks } from "../src/seed.js";
+import { assertDemoSeedAllowed, demoTaskDependencies, demoTasks } from "../src/seed.js";
 
 describe("demo seed policy", () => {
   it("rejects production demo seeding unless explicitly overridden", () => {
@@ -39,6 +39,14 @@ describe("demo seed policy", () => {
     }
     for (const sequences of perBoard.values()) {
       expect(new Set(sequences).size).toBe(sequences.length);
+    }
+
+    // Every demo dependency stays on one board and never points at itself.
+    const boardOf = new Map<string, string>(demoTasks.map((task) => [task.id, task.boardId]));
+    for (const [taskId, dependsOnTaskId] of demoTaskDependencies) {
+      expect(taskId).not.toBe(dependsOnTaskId);
+      expect(boardOf.get(taskId)).toBeDefined();
+      expect(boardOf.get(taskId)).toBe(boardOf.get(dependsOnTaskId));
     }
   });
 });

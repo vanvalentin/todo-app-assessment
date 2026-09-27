@@ -12,14 +12,25 @@ export interface TaskPersonPreview {
   readonly avatarSeed: string;
 }
 
+/** A same-board prerequisite of a task, as embedded in its response. */
+export interface TaskReferenceRow {
+  readonly id: string;
+  readonly sequence: number;
+  readonly name: string;
+  readonly status: TaskStatus;
+}
+
 /** A persisted task row joined with the creator/assignee/reporter previews the API returns. */
 export interface TaskRow {
   readonly id: string;
   readonly boardId: string;
   readonly sequence: number;
   readonly name: string;
+  readonly description: string | null;
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
+  /** Prerequisites ordered by board sequence. */
+  readonly dependsOn: readonly TaskReferenceRow[];
   readonly assignee: TaskPersonPreview | null;
   readonly reporter: TaskPersonPreview;
   /** UTC midnight for the calendar day; formatted to `YYYY-MM-DD` by the service. */
@@ -76,25 +87,37 @@ export interface TaskPage {
  */
 export interface TaskWriteInput {
   readonly name: string;
+  readonly description: string | null;
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
   readonly assigneeId: string | null;
   readonly reporterId: string;
   readonly dueDate: string | null;
+  /** The complete prerequisite set; never contains the task's own id (the service rejects that). */
+  readonly dependsOnIds: readonly string[];
 }
+
+/** Validation failures shared by create and update. */
+export type TaskWriteViolation =
+  | { readonly kind: "ASSIGNEE_NOT_MEMBER" }
+  | { readonly kind: "REPORTER_NOT_MEMBER" }
+  /** A dependency id is unknown, deleted, or belongs to another board. */
+  | { readonly kind: "DEPENDENCY_NOT_FOUND" }
+  /** Moving into IN_PROGRESS or COMPLETED requires every selected prerequisite to be settled. */
+  | { readonly kind: "DEPENDENCIES_INCOMPLETE" };
 
 export type CreateTaskResult =
   | { readonly kind: "CREATED"; readonly task: TaskRow }
   | { readonly kind: "NOT_FOUND" }
-  | { readonly kind: "ASSIGNEE_NOT_MEMBER" }
-  | { readonly kind: "REPORTER_NOT_MEMBER" };
+  | TaskWriteViolation;
 
 export type UpdateTaskResult =
   | { readonly kind: "UPDATED"; readonly task: TaskRow }
   | { readonly kind: "NOT_FOUND" }
   | { readonly kind: "VERSION_CONFLICT" }
-  | { readonly kind: "ASSIGNEE_NOT_MEMBER" }
-  | { readonly kind: "REPORTER_NOT_MEMBER" };
+  /** A new edge would let a prerequisite (transitively) depend on this task. */
+  | { readonly kind: "DEPENDENCY_CYCLE" }
+  | TaskWriteViolation;
 
 export type DeleteTaskResult = "DELETED" | "NOT_FOUND" | "VERSION_CONFLICT";
 

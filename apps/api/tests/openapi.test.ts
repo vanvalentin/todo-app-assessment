@@ -39,6 +39,7 @@ describe("application OpenAPI", () => {
           "Task",
           "TaskListResponse",
           "TaskPriority",
+          "TaskReference",
           "UpdateBoardRequest",
           "UpdateTaskRequest",
         ],
@@ -92,6 +93,9 @@ describe("application OpenAPI", () => {
       ]),
     );
     expect(boardTasksPath?.post?.requestBody).toBeDefined();
+    expect(boardTasksPath?.post?.responses?.["422"]?.description).toContain(
+      "TASK_DEPENDENCIES_INCOMPLETE",
+    );
     expect(Object.keys(boardTasksPath?.post?.responses ?? {}).sort()).toEqual([
       "201",
       "400",
@@ -103,6 +107,9 @@ describe("application OpenAPI", () => {
     ]);
     const taskPath = document.paths?.["/api/v1/tasks/{taskId}"];
     expect(taskPath?.patch?.requestBody).toBeDefined();
+    expect(taskPath?.patch?.responses?.["422"]?.description).toContain(
+      "TASK_DEPENDENCIES_INCOMPLETE",
+    );
     expect(Object.keys(taskPath?.patch?.responses ?? {}).sort()).toEqual([
       "200",
       "400",

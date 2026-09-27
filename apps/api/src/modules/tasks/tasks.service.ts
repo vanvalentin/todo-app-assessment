@@ -20,6 +20,7 @@ import type {
   TaskListFilters,
   TaskRow,
   TasksRepository,
+  TaskWriteViolation,
 } from "./tasks.types.js";
 
 export const DEFAULT_TASK_PAGE_LIMIT = 50;
@@ -45,8 +46,8 @@ export interface TasksServiceDeps {
 
 /**
  * Task rules for the Kanban slice. Every active board member, including
- * CONTRIBUTOR, may manage tasks and may set any active member as assignee or
- * reporter; only membership itself is required, and the repository enforces it
+ * CONTRIBUTOR, may manage tasks, may set any active member as assignee or
+ * reporter, and may make a task depend on any other task on the same board; only membership itself is required, and the repository enforces it
  * inside each transaction rather than trusting the caller. Search, filter, sort,
  * and archive visibility (phase 4c) are resolved here before reaching the
  * repository, which stays a thin, filter-shaped Prisma query.
@@ -70,8 +71,10 @@ function toTask(row: TaskRow): Task {
     boardId: row.boardId,
     sequence: row.sequence,
     name: row.name,
+    description: row.description,
     status: row.status,
     priority: row.priority,
+    dependsOn: row.dependsOn.map((reference) => ({ ...reference })),
     assignee: row.assignee,
     reporter: row.reporter,
     dueDate: formatDueDate(row.dueDate),
@@ -108,6 +111,48 @@ function reporterNotMember(): HttpError {
     "TASK_REPORTER_NOT_MEMBER",
     "The reporter must be an active member of this board.",
   );
+}
+
+function dependencyNotFound(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_DEPENDENCY_NOT_FOUND",
+    "Every dependency must be an existing task on this board.",
+  );
+}
+
+function dependencySelf(): HttpError {
+  return new HttpError(422, "TASK_DEPENDENCY_SELF", "A task cannot depend on itself.");
+}
+
+function dependencyCycle(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_DEPENDENCY_CYCLE",
+    "That dependency would create a cycle: the chosen task already depends on this one.",
+  );
+}
+
+function dependenciesIncomplete(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_DEPENDENCIES_INCOMPLETE",
+    "Complete all dependencies before moving this task to In Progress or Completed.",
+  );
+}
+
+/** Maps a create/update validation failure to its Problem Details error. */
+function writeViolation(kind: TaskWriteViolation["kind"]): HttpError {
+  switch (kind) {
+    case "ASSIGNEE_NOT_MEMBER":
+      return assigneeNotMember();
+    case "REPORTER_NOT_MEMBER":
+      return reporterNotMember();
+    case "DEPENDENCY_NOT_FOUND":
+      return dependencyNotFound();
+    case "DEPENDENCIES_INCOMPLETE":
+      return dependenciesIncomplete();
+  }
 }
 
 function invalidCursor(): HttpError {
@@ -210,16 +255,17 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
     async createTask(userId, boardId, input): Promise<Task> {
       const result = await repository.createForMember(boardId, userId, {
         name: input.name,
+        description: input.description,
         status: input.status,
         priority: input.priority,
         assigneeId: input.assigneeId,
         // Omitted defaults to the caller; any active member may be named instead.
         reporterId: input.reporterId ?? userId,
         dueDate: input.dueDate,
+        dependsOnIds: input.dependsOnIds,
       });
       if (result.kind === "NOT_FOUND") throw boardNotFound();
-      if (result.kind === "ASSIGNEE_NOT_MEMBER") throw assigneeNotMember();
-      if (result.kind === "REPORTER_NOT_MEMBER") throw reporterNotMember();
+      if (result.kind !== "CREATED") throw writeViolation(result.kind);
       return toTask(result.task);
     },
 
@@ -230,19 +276,24 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
     },
 
     async updateTask(userId, taskId, input): Promise<Task> {
+      // A new task cannot name itself, so only an update can; the database CHECK
+      // task_dependency_not_self is the backstop.
+      if (input.dependsOnIds.includes(taskId)) throw dependencySelf();
       const result = await repository.updateForMember(taskId, userId, {
         name: input.name,
+        description: input.description,
         status: input.status,
         priority: input.priority,
         assigneeId: input.assigneeId,
         reporterId: input.reporterId,
         dueDate: input.dueDate,
+        dependsOnIds: input.dependsOnIds,
         version: input.version,
       });
       if (result.kind === "NOT_FOUND") throw taskNotFound();
       if (result.kind === "VERSION_CONFLICT") throw taskVersionConflict();
-      if (result.kind === "ASSIGNEE_NOT_MEMBER") throw assigneeNotMember();
-      if (result.kind === "REPORTER_NOT_MEMBER") throw reporterNotMember();
+      if (result.kind === "DEPENDENCY_CYCLE") throw dependencyCycle();
+      if (result.kind !== "UPDATED") throw writeViolation(result.kind);
       return toTask(result.task);
     },
 

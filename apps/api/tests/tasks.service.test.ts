@@ -19,6 +19,24 @@ const ASSIGNEE_ID = "01900000-0000-7000-8000-000000000005";
 
 const reporterPreview = { id: USER_ID, name: "Ada", avatarSeed: "seed" };
 const assigneePreview = { id: ASSIGNEE_ID, name: "Grace", avatarSeed: "grace-seed" };
+const PREREQUISITE_ID = "01900000-0000-7000-8000-000000000006";
+const prerequisite = {
+  id: PREREQUISITE_ID,
+  sequence: 2,
+  name: "Buy paper",
+  status: "COMPLETED" as TaskStatus,
+};
+const updateInput = {
+  name: "Curate photo prints",
+  description: null,
+  status: "NOT_STARTED" as const,
+  priority: "MEDIUM" as const,
+  assigneeId: null,
+  reporterId: USER_ID,
+  dueDate: null,
+  dependsOnIds: [PREREQUISITE_ID],
+  version: 1,
+};
 
 function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
   return {
@@ -26,8 +44,10 @@ function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
     boardId: BOARD_ID,
     sequence: 1,
     name: "Curate photo prints",
+    description: null,
     status: "NOT_STARTED" as TaskStatus,
     priority: "MEDIUM" as TaskPriority,
+    dependsOn: [],
     assignee: null,
     reporter: reporterPreview,
     dueDate: null,
@@ -73,6 +93,8 @@ describe("tasks service", () => {
           buildTask({
             assignee: assigneePreview,
             dueDate: new Date("2027-04-18T00:00:00.000Z"),
+            description: "Pick **twelve** prints.",
+            dependsOn: [prerequisite],
           }),
         ),
       }),
@@ -83,8 +105,10 @@ describe("tasks service", () => {
       boardId: BOARD_ID,
       sequence: 1,
       name: "Curate photo prints",
+      description: "Pick **twelve** prints.",
       status: "NOT_STARTED",
       priority: "MEDIUM",
+      dependsOn: [prerequisite],
       assignee: assigneePreview,
       reporter: reporterPreview,
       dueDate: "2027-04-18",
@@ -217,6 +241,8 @@ describe("tasks service", () => {
         status: "IN_PROGRESS",
         priority: "HIGH",
         assigneeId: null,
+        description: null,
+        dependsOnIds: [],
         dueDate: null,
       }),
     );
@@ -226,6 +252,8 @@ describe("tasks service", () => {
       status: "IN_PROGRESS",
       priority: "HIGH",
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: USER_ID,
       dueDate: null,
     });
@@ -241,6 +269,8 @@ describe("tasks service", () => {
       status: "NOT_STARTED",
       priority: "MEDIUM",
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: ASSIGNEE_ID,
       dueDate: null,
     });
@@ -263,6 +293,8 @@ describe("tasks service", () => {
           status: "NOT_STARTED",
           priority: "MEDIUM",
           assigneeId: "01900000-0000-7000-8000-000000000999",
+          description: null,
+          dependsOnIds: [],
           dueDate: null,
         }),
       ),
@@ -279,12 +311,66 @@ describe("tasks service", () => {
           status: "NOT_STARTED",
           priority: "MEDIUM",
           assigneeId: null,
+          description: null,
+          dependsOnIds: [],
           reporterId: "01900000-0000-7000-8000-000000000999",
           dueDate: null,
           version: 1,
         }),
       ),
     ).toMatchObject({ status: 422, code: "TASK_REPORTER_NOT_MEMBER" });
+  });
+
+  it("rejects a task that depends on itself without touching the repository", async () => {
+    const updateForMember = vi.fn(
+      async (): Promise<UpdateTaskResult> => ({ kind: "UPDATED", task: buildTask() }),
+    );
+    const service = createTasksService({ repository: repository({ updateForMember }) });
+    expect(
+      await failureOf(
+        service.updateTask(USER_ID, TASK_ID, { ...updateInput, dependsOnIds: [TASK_ID] }),
+      ),
+    ).toMatchObject({ status: 422, code: "TASK_DEPENDENCY_SELF" });
+    expect(updateForMember).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["DEPENDENCY_NOT_FOUND", "TASK_DEPENDENCY_NOT_FOUND"],
+    ["DEPENDENCY_CYCLE", "TASK_DEPENDENCY_CYCLE"],
+    ["DEPENDENCIES_INCOMPLETE", "TASK_DEPENDENCIES_INCOMPLETE"],
+  ] as const)("maps a %s dependency write to 422 %s", async (kind, code) => {
+    const service = createTasksService({
+      repository: repository({
+        updateForMember: vi.fn(async (): Promise<UpdateTaskResult> => ({ kind })),
+      }),
+    });
+    expect(await failureOf(service.updateTask(USER_ID, TASK_ID, updateInput))).toMatchObject({
+      status: 422,
+      code,
+    });
+  });
+
+  it("maps an unknown or cross-board dependency on create to 422", async () => {
+    const service = createTasksService({
+      repository: repository({
+        createForMember: vi.fn(
+          async (): Promise<CreateTaskResult> => ({ kind: "DEPENDENCY_NOT_FOUND" }),
+        ),
+      }),
+    });
+    const createInput = {
+      name: updateInput.name,
+      description: updateInput.description,
+      status: updateInput.status,
+      priority: updateInput.priority,
+      assigneeId: updateInput.assigneeId,
+      dueDate: updateInput.dueDate,
+      dependsOnIds: updateInput.dependsOnIds,
+    };
+    expect(await failureOf(service.createTask(USER_ID, BOARD_ID, createInput))).toMatchObject({
+      status: 422,
+      code: "TASK_DEPENDENCY_NOT_FOUND",
+    });
   });
 
   it("maps stale updates and deletes to a task version conflict", async () => {
@@ -298,6 +384,8 @@ describe("tasks service", () => {
       status: "COMPLETED" as const,
       priority: "LOW" as const,
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: USER_ID,
       dueDate: null,
       version: 1,
@@ -330,6 +418,8 @@ describe("tasks service", () => {
           status: "IN_PROGRESS",
           priority: "LOW",
           assigneeId: null,
+          description: null,
+          dependsOnIds: [],
           reporterId: USER_ID,
           dueDate: null,
           version: 1,
@@ -363,6 +453,8 @@ describe("tasks service", () => {
       status: "IN_PROGRESS",
       priority: "MEDIUM",
       assigneeId: ASSIGNEE_ID,
+      description: null,
+      dependsOnIds: [],
       reporterId: USER_ID,
       dueDate: "2027-05-01",
       version: 1,

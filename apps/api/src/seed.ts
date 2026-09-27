@@ -89,6 +89,8 @@ export const demoTasks = [
     assignee: "grace@example.test",
     reporter: "ada@example.test",
     dueDate: "2027-04-18",
+    description:
+      "Email the fair committee to confirm our **corner booth**.\n\n- Table size\n- Power outlet",
   },
   {
     id: "01900000-0000-7000-8000-000000000702",
@@ -101,6 +103,8 @@ export const demoTasks = [
     assignee: "grace@example.test",
     reporter: "grace@example.test",
     dueDate: "2027-04-25",
+    description:
+      "Pick twelve prints for the wall. See the [fair guide](https://example.test/fair-guide).",
   },
   {
     id: "01900000-0000-7000-8000-000000000703",
@@ -113,6 +117,7 @@ export const demoTasks = [
     assignee: null,
     reporter: "linus@example.test",
     dueDate: null,
+    description: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000704",
@@ -125,6 +130,7 @@ export const demoTasks = [
     assignee: null,
     reporter: "ada@example.test",
     dueDate: null,
+    description: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000705",
@@ -137,6 +143,7 @@ export const demoTasks = [
     assignee: "ada@example.test",
     reporter: "grace@example.test",
     dueDate: "2027-05-02",
+    description: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000706",
@@ -149,6 +156,7 @@ export const demoTasks = [
     assignee: "maya@example.test",
     reporter: "ada@example.test",
     dueDate: null,
+    description: "Summarize the frozen scope for the changelog.",
   },
   {
     id: "01900000-0000-7000-8000-000000000707",
@@ -161,6 +169,7 @@ export const demoTasks = [
     assignee: "maya@example.test",
     reporter: "maya@example.test",
     dueDate: "2027-03-14",
+    description: null,
   },
   {
     id: "01900000-0000-7000-8000-000000000708",
@@ -173,7 +182,14 @@ export const demoTasks = [
     assignee: null,
     reporter: "maya@example.test",
     dueDate: "2027-06-01",
+    description: null,
   },
+] as const;
+
+/** Deterministic same-board prerequisite edges: [task id, depends-on task id]. */
+export const demoTaskDependencies = [
+  ["01900000-0000-7000-8000-000000000702", "01900000-0000-7000-8000-000000000701"],
+  ["01900000-0000-7000-8000-000000000706", "01900000-0000-7000-8000-000000000705"],
 ] as const;
 
 export async function seed(): Promise<void> {
@@ -234,6 +250,7 @@ export async function seed(): Promise<void> {
         where: { id: task.id },
         update: {
           name: task.name,
+          description: task.description,
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
@@ -246,6 +263,7 @@ export async function seed(): Promise<void> {
           boardId: task.boardId,
           sequence: task.sequence,
           name: task.name,
+          description: task.description,
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
@@ -253,6 +271,16 @@ export async function seed(): Promise<void> {
           assigneeId,
           dueDate,
         },
+      });
+    }
+    const boardOfTask = new Map<string, string>(demoTasks.map((task) => [task.id, task.boardId]));
+    for (const [taskId, dependsOnTaskId] of demoTaskDependencies) {
+      const boardId = boardOfTask.get(taskId);
+      if (!boardId) throw new Error(`Missing demo dependency task: ${taskId}`);
+      await prisma.taskDependency.upsert({
+        where: { taskId_dependsOnTaskId: { taskId, dependsOnTaskId } },
+        update: {},
+        create: { boardId, taskId, dependsOnTaskId },
       });
     }
     // Keep each board counter ahead of the deterministic rows so tasks created later

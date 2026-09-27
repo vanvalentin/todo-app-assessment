@@ -25,6 +25,7 @@ import {
   taskListQuerySchema,
   taskListResponseSchema,
   taskPrioritySchema,
+  taskReferenceSchema,
   taskSchema,
   updateTaskRequestSchema,
 } from "@ksat/contracts";
@@ -50,6 +51,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register("AcceptInvitationResponse", acceptInvitationResponseSchema);
   registry.register("ProblemDetails", problemDetailsSchema);
   registry.register("TaskPriority", taskPrioritySchema);
+  registry.register("TaskReference", taskReferenceSchema);
   registry.register("Task", taskSchema);
   registry.register("TaskListResponse", taskListResponseSchema);
   registry.register("CreateTaskRequest", createTaskRequestSchema);
@@ -243,7 +245,11 @@ export function buildOpenApiDocument(): OpenApiDocument {
       401: { description: "Unauthenticated.", ...problem },
       403: { description: "Trusted origin required.", ...problem },
       404: { description: "Board is unknown or not a member.", ...problem },
-      422: { description: "Assignee or reporter is not an active board member.", ...problem },
+      422: {
+        description:
+          "Assignee or reporter is not an active board member (TASK_ASSIGNEE_NOT_MEMBER, TASK_REPORTER_NOT_MEMBER), a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), or the task starts In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
+        ...problem,
+      },
       429: { description: "Task creation rate limit exceeded.", ...problem },
     },
   });
@@ -271,13 +277,21 @@ export function buildOpenApiDocument(): OpenApiDocument {
       },
     },
     responses: {
-      200: { description: "Updated task, including a status move.", ...json(taskSchema) },
+      200: {
+        description:
+          "Updated task, including a status move. The request is the full editable state: dependsOnIds replaces the prerequisite set.",
+        ...json(taskSchema),
+      },
       400: { description: "Invalid task id or update request.", ...problem },
       401: { description: "Unauthenticated.", ...problem },
       403: { description: "Trusted origin required.", ...problem },
       404: { description: "Task is unknown or the caller is not a board member.", ...problem },
       409: { description: "Task version is stale.", ...problem },
-      422: { description: "Assignee or reporter is not an active board member.", ...problem },
+      422: {
+        description:
+          "Assignee or reporter is not an active board member, a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), names the task itself (TASK_DEPENDENCY_SELF), would create a cycle (TASK_DEPENDENCY_CYCLE), or the task moves into In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
+        ...problem,
+      },
       429: { description: "Task update rate limit exceeded.", ...problem },
     },
   });

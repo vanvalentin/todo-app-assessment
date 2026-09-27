@@ -7,6 +7,7 @@ import type {
   TaskListFilters,
   TaskPage,
   TaskPageRequest,
+  TaskReferenceRow,
   TaskRow,
   TasksRepository,
   TaskWriteInput,
@@ -18,17 +19,30 @@ const withPeople = {
   createdBy: { select: personPreview },
   assignee: { select: personPreview },
   reporter: { select: personPreview },
+  dependencies: {
+    select: { dependsOn: { select: { id: true, sequence: true, name: true, status: true } } },
+    orderBy: { dependsOn: { sequence: "asc" } },
+  },
 } as const;
 const WRITE_CONFLICT_RETRIES = 5;
+
+/**
+ * Statuses a dependent may move into only once every prerequisite has settled.
+ * NOT_STARTED and ARCHIVED stay outside the gate: a task can still be parked or set
+ * aside while a prerequisite is open.
+ */
+const GATED_MOVE_TARGETS: readonly TaskStatus[] = ["IN_PROGRESS", "COMPLETED"];
 
 interface TaskWithPeople {
   readonly id: string;
   readonly boardId: string;
   readonly sequence: number;
   readonly name: string;
+  readonly description: string | null;
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
   readonly dueDate: Date | null;
+  readonly dependencies: ReadonlyArray<{ readonly dependsOn: TaskReferenceRow }>;
   readonly version: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
@@ -47,8 +61,10 @@ function toTaskRow(row: TaskWithPeople): TaskRow {
     boardId: row.boardId,
     sequence: row.sequence,
     name: row.name,
+    description: row.description,
     status: row.status,
     priority: row.priority,
+    dependsOn: row.dependencies.map((edge) => edge.dependsOn),
     assignee: row.assignee,
     reporter: row.reporter,
     dueDate: row.dueDate,
@@ -195,12 +211,16 @@ async function retryOnWriteConflict<T>(operation: () => Promise<T>): Promise<T> 
  */
 function membershipViolationKind(
   error: unknown,
-): "ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | null {
+): "ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | "DEPENDENCY_NOT_FOUND" | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2003") {
     return null;
   }
   const meta = error.meta as { constraint?: unknown; field_name?: unknown } | undefined;
   const constraint = String(meta?.constraint ?? meta?.field_name ?? "");
+  // A prerequisite deleted between the in-transaction check and the edge insert.
+  if (constraint.includes("task_dependency") || constraint.includes("dependsOnTaskId")) {
+    return "DEPENDENCY_NOT_FOUND";
+  }
   if (constraint.includes("assignee")) return "ASSIGNEE_NOT_MEMBER";
   if (constraint.includes("reporter")) return "REPORTER_NOT_MEMBER";
   return null;
@@ -234,6 +254,70 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     });
     if (!reporter) return "REPORTER_NOT_MEMBER";
     return null;
+  }
+
+  /** Every requested prerequisite must be a task on this same board. */
+  async function dependenciesExist(
+    tx: Prisma.TransactionClient,
+    boardId: string,
+    dependsOnIds: readonly string[],
+  ): Promise<boolean> {
+    if (dependsOnIds.length === 0) return true;
+    const found = await tx.task.count({ where: { boardId, id: { in: [...dependsOnIds] } } });
+    return found === dependsOnIds.length;
+  }
+
+  /**
+   * An unfinished prerequisite blocks a move into In Progress or Completed. ARCHIVED
+   * counts as settled: the domain maps the prototype's "Canceled" control onto that
+   * status, so cancelled work will never complete, and keeping it blocking would
+   * dead-end every dependent until its edge was deleted. The edge is kept, so the
+   * chip still shows that the prerequisite was archived rather than finished.
+   */
+  async function dependenciesAreSettled(
+    tx: Prisma.TransactionClient,
+    boardId: string,
+    dependsOnIds: readonly string[],
+  ): Promise<boolean> {
+    if (dependsOnIds.length === 0) return true;
+    const blocking = await tx.task.count({
+      where: {
+        boardId,
+        id: { in: [...dependsOnIds] },
+        status: { in: ["NOT_STARTED", "IN_PROGRESS"] },
+      },
+    });
+    return blocking === 0;
+  }
+
+  /**
+   * Serializes dependency-graph writes per board. Two concurrent edits that each add
+   * one half of a cycle (A -> B and B -> A) would both pass a READ COMMITTED check;
+   * holding the board row lock until commit makes the second one see the first edge.
+   */
+  async function lockBoardGraph(tx: Prisma.TransactionClient, boardId: string): Promise<void> {
+    await tx.$queryRaw`SELECT 1 FROM "board" WHERE "id" = ${boardId} FOR UPDATE`;
+  }
+
+  /** True when any new prerequisite already (transitively) depends on the task itself. */
+  async function wouldCreateCycle(
+    tx: Prisma.TransactionClient,
+    boardId: string,
+    taskId: string,
+    newDependsOnIds: readonly string[],
+  ): Promise<boolean> {
+    // UNION (not UNION ALL) discards revisited nodes, so the walk always terminates.
+    const rows = await tx.$queryRaw<Array<{ cycle: boolean }>>`
+      WITH RECURSIVE reachable("id") AS (
+        SELECT unnest(${[...newDependsOnIds]}::text[])
+        UNION
+        SELECT d."dependsOnTaskId"
+        FROM "task_dependency" d
+        JOIN reachable r ON d."taskId" = r."id"
+        WHERE d."boardId" = ${boardId}
+      )
+      SELECT EXISTS (SELECT 1 FROM reachable WHERE "id" = ${taskId}) AS "cycle"`;
+    return rows[0]?.cycle === true;
   }
 
   return {
@@ -270,7 +354,17 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
 
           const violation = await checkPeopleMembership(tx, boardId, input);
           if (violation) return { kind: violation } as const;
+          if (!(await dependenciesExist(tx, boardId, input.dependsOnIds))) {
+            return { kind: "DEPENDENCY_NOT_FOUND" } as const;
+          }
+          if (
+            GATED_MOVE_TARGETS.includes(input.status) &&
+            !(await dependenciesAreSettled(tx, boardId, input.dependsOnIds))
+          ) {
+            return { kind: "DEPENDENCIES_INCOMPLETE" } as const;
+          }
 
+          // A brand-new task has no dependents, so its edges can never close a cycle.
           // The board row lock serializes concurrent creation at READ COMMITTED, so each
           // transaction reads the previous value and the sequence has no duplicates or gaps.
           const board = await tx.board.update({
@@ -279,12 +373,14 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             select: { nextTaskSequence: true },
           });
           try {
-            const task = await tx.task.create({
+            const taskId = generateUuid();
+            await tx.task.create({
               data: {
-                id: generateUuid(),
+                id: taskId,
                 boardId,
                 sequence: board.nextTaskSequence - 1,
                 name: input.name,
+                description: input.description,
                 status: input.status,
                 priority: input.priority,
                 assigneeId: input.assigneeId,
@@ -292,6 +388,19 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 dueDate: dueDateToColumn(input.dueDate),
                 createdById: userId,
               },
+              select: { id: true },
+            });
+            if (input.dependsOnIds.length > 0) {
+              await tx.taskDependency.createMany({
+                data: input.dependsOnIds.map((dependsOnTaskId) => ({
+                  boardId,
+                  taskId,
+                  dependsOnTaskId,
+                })),
+              });
+            }
+            const task = await tx.task.findUniqueOrThrow({
+              where: { id: taskId },
               include: withPeople,
             });
             return { kind: "CREATED", task: toTaskRow(task) } as const;
@@ -317,12 +426,45 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
         prisma.$transaction(async (tx) => {
           const existing = await tx.task.findFirst({
             where: { id: taskId, ...memberScope(userId) },
-            select: { boardId: true },
+            select: {
+              boardId: true,
+              status: true,
+              dependencies: { select: { dependsOnTaskId: true } },
+            },
           });
           if (!existing) return { kind: "NOT_FOUND" } as const;
+          const { boardId } = existing;
 
-          const violation = await checkPeopleMembership(tx, existing.boardId, input);
+          const violation = await checkPeopleMembership(tx, boardId, input);
           if (violation) return { kind: violation } as const;
+          if (!(await dependenciesExist(tx, boardId, input.dependsOnIds))) {
+            return { kind: "DEPENDENCY_NOT_FOUND" } as const;
+          }
+          const current = new Set(existing.dependencies.map((edge) => edge.dependsOnTaskId));
+          const desired = new Set(input.dependsOnIds);
+          const added = input.dependsOnIds.filter((id) => !current.has(id));
+          const removed = [...current].filter((id) => !desired.has(id));
+          // The cycle check runs before the status gate. A loop can never be satisfied, so
+          // naming it is more useful than complaining about prerequisites the caller would
+          // be unable to complete. Only a new edge can close a cycle.
+          if (added.length > 0) {
+            await lockBoardGraph(tx, boardId);
+            if (await wouldCreateCycle(tx, boardId, taskId, added)) {
+              return { kind: "DEPENDENCY_CYCLE" } as const;
+            }
+          }
+
+          // Only a move into a gated status is checked. Re-saving a task whose status is
+          // unchanged must stay possible even when an upstream prerequisite drifted back,
+          // otherwise a rule about moving would block unrelated edits.
+          const movingIntoGatedStatus =
+            input.status !== existing.status && GATED_MOVE_TARGETS.includes(input.status);
+          if (
+            movingIntoGatedStatus &&
+            !(await dependenciesAreSettled(tx, boardId, input.dependsOnIds))
+          ) {
+            return { kind: "DEPENDENCIES_INCOMPLETE" } as const;
+          }
 
           let updated: { count: number };
           try {
@@ -330,6 +472,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
               where: { id: taskId, version: input.version, ...memberScope(userId) },
               data: {
                 name: input.name,
+                description: input.description,
                 status: input.status,
                 priority: input.priority,
                 assigneeId: input.assigneeId,
@@ -338,6 +481,18 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 version: { increment: 1 },
               },
             });
+            // Edges change only after the version predicate won, so a stale edit
+            // never rewrites the dependency set.
+            if (updated.count === 1 && removed.length > 0) {
+              await tx.taskDependency.deleteMany({
+                where: { taskId, dependsOnTaskId: { in: removed } },
+              });
+            }
+            if (updated.count === 1 && added.length > 0) {
+              await tx.taskDependency.createMany({
+                data: added.map((dependsOnTaskId) => ({ boardId, taskId, dependsOnTaskId })),
+              });
+            }
           } catch (error) {
             const kind = membershipViolationKind(error);
             if (kind) return { kind } as const;

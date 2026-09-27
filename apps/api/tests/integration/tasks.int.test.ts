@@ -1,6 +1,8 @@
 import { PrismaClient } from "@prisma/client";
+import type { TaskStatus } from "@ksat/contracts";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createPrismaTasksRepository } from "../../src/modules/tasks/tasks.repository.js";
+import type { TaskRow } from "../../src/modules/tasks/tasks.types.js";
 
 const configuredDatabaseUrl = process.env.INTEGRATION_DATABASE_URL;
 const databaseUrl = configuredDatabaseUrl ?? "postgresql://invalid/ksat_test";
@@ -107,6 +109,8 @@ run("PostgreSQL tasks", () => {
           status: "NOT_STARTED",
           priority: "MEDIUM",
           assigneeId: null,
+          description: null,
+          dependsOnIds: [],
           reporterId: ids.contributor,
           dueDate: null,
         }),
@@ -131,6 +135,8 @@ run("PostgreSQL tasks", () => {
         status: "NOT_STARTED",
         priority: "LOW",
         assigneeId: null,
+        description: null,
+        dependsOnIds: [],
         reporterId: ids.outsider,
         dueDate: null,
       }),
@@ -144,6 +150,8 @@ run("PostgreSQL tasks", () => {
       priority: "LOW",
       // The outsider is a member of otherBoard, not this board.
       assigneeId: ids.outsider,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.contributor,
       dueDate: null,
     });
@@ -154,6 +162,8 @@ run("PostgreSQL tasks", () => {
       status: "NOT_STARTED",
       priority: "LOW",
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.outsider,
       dueDate: null,
     });
@@ -166,6 +176,8 @@ run("PostgreSQL tasks", () => {
       status: "NOT_STARTED",
       priority: "HIGH",
       assigneeId: ids.contributor,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.admin,
       dueDate: "2027-04-18",
     });
@@ -184,6 +196,8 @@ run("PostgreSQL tasks", () => {
       status: "IN_PROGRESS",
       priority: "HIGH",
       assigneeId: ids.admin,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.contributor,
       dueDate: "2027-05-01",
       version: created.task.version,
@@ -202,6 +216,8 @@ run("PostgreSQL tasks", () => {
       status: "IN_PROGRESS",
       priority: "HIGH",
       assigneeId: ids.outsider,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.contributor,
       dueDate: null,
       version: moved.kind === "UPDATED" ? moved.task.version : 0,
@@ -253,6 +269,8 @@ run("PostgreSQL tasks", () => {
         status: "IN_PROGRESS",
         priority: "HIGH",
         assigneeId: null,
+        description: null,
+        dependsOnIds: [],
         reporterId: ids.contributor,
         dueDate: null,
         version: target.version,
@@ -262,6 +280,8 @@ run("PostgreSQL tasks", () => {
         status: "COMPLETED",
         priority: "LOW",
         assigneeId: null,
+        description: null,
+        dependsOnIds: [],
         reporterId: ids.contributor,
         dueDate: null,
         version: target.version,
@@ -279,6 +299,8 @@ run("PostgreSQL tasks", () => {
       status: "NOT_STARTED",
       priority: "LOW",
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.contributor,
       dueDate: null,
       version: target.version,
@@ -290,6 +312,8 @@ run("PostgreSQL tasks", () => {
         status: "NOT_STARTED",
         priority: "LOW",
         assigneeId: null,
+        description: null,
+        dependsOnIds: [],
         reporterId: ids.contributor,
         dueDate: null,
         version: stored.version,
@@ -308,6 +332,8 @@ run("PostgreSQL tasks", () => {
       status: "NOT_STARTED",
       priority: "LOW",
       assigneeId: null,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.admin,
       dueDate: null,
     });
@@ -332,6 +358,8 @@ run("PostgreSQL tasks", () => {
       status: "NOT_STARTED",
       priority: "LOW",
       assigneeId: ids.contributor,
+      description: null,
+      dependsOnIds: [],
       reporterId: ids.admin,
       dueDate: null,
     });
@@ -442,6 +470,8 @@ run("PostgreSQL tasks", () => {
           status: "NOT_STARTED",
           priority: spec.priority,
           assigneeId: spec.assigneeId,
+          description: null,
+          dependsOnIds: [],
           reporterId: ids.admin,
           dueDate: spec.dueDate,
         });
@@ -634,6 +664,345 @@ run("PostgreSQL tasks", () => {
         taskIds.none,
       ]);
       expect(new Set(seen).size).toBe(5);
+    });
+  });
+
+  describe("phase 5a description and dependencies", () => {
+    const depsBoardId = "01900000-0000-7000-8000-000000000501";
+    const otherBoardTaskId = "01900000-0000-7000-8000-000000000509";
+
+    async function create(
+      name: string,
+      dependsOnIds: string[] = [],
+      description: string | null = null,
+    ) {
+      const result = await repository.createForMember(depsBoardId, ids.contributor, {
+        name,
+        description,
+        status: "NOT_STARTED",
+        priority: "MEDIUM",
+        assigneeId: null,
+        reporterId: ids.contributor,
+        dueDate: null,
+        dependsOnIds,
+      });
+      if (result.kind !== "CREATED") throw new Error(`expected CREATED, got ${result.kind}`);
+      return result.task;
+    }
+
+    function setDependencies(task: TaskRow, dependsOnIds: string[], version = task.version) {
+      return repository.updateForMember(task.id, ids.contributor, {
+        name: task.name,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        assigneeId: null,
+        reporterId: ids.contributor,
+        dueDate: null,
+        dependsOnIds,
+        version,
+      });
+    }
+
+    function setStatus(task: TaskRow, status: TaskStatus) {
+      return repository.updateForMember(task.id, ids.contributor, {
+        name: task.name,
+        description: task.description,
+        status,
+        priority: task.priority,
+        assigneeId: null,
+        reporterId: ids.contributor,
+        dueDate: null,
+        dependsOnIds: task.dependsOn.map((dependency) => dependency.id),
+        version: task.version,
+      });
+    }
+
+    async function reload(taskId: string): Promise<TaskRow> {
+      const row = await repository.getForMember(taskId, ids.contributor);
+      if (!row) throw new Error("expected a visible task");
+      return row;
+    }
+
+    beforeAll(async () => {
+      await prisma.board.deleteMany({ where: { id: depsBoardId } });
+      await prisma.board.create({
+        data: {
+          id: depsBoardId,
+          name: "Dependency board",
+          ownerId: ids.admin,
+          memberships: {
+            create: [
+              { id: "01900000-0000-7000-8000-000000000502", userId: ids.admin, role: "ADMIN" },
+              {
+                id: "01900000-0000-7000-8000-000000000503",
+                userId: ids.contributor,
+                role: "CONTRIBUTOR",
+              },
+            ],
+          },
+        },
+      });
+      await prisma.task.create({
+        data: {
+          id: otherBoardTaskId,
+          boardId: ids.otherBoard,
+          sequence: 900,
+          name: "Other board task",
+          reporterId: ids.outsider,
+          createdById: ids.outsider,
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.board.deleteMany({ where: { id: depsBoardId } });
+      await prisma.task.deleteMany({ where: { id: otherBoardTaskId } });
+    });
+
+    it("persists Markdown and returns prerequisites ordered by sequence", async () => {
+      const first = await create("First prerequisite");
+      const second = await create("Second prerequisite");
+      const task = await create("Dependent", [second.id, first.id], "## Plan\n\n- [ ] draft");
+      expect(task.description).toBe("## Plan\n\n- [ ] draft");
+      expect(task.dependsOn).toEqual([
+        { id: first.id, sequence: first.sequence, name: first.name, status: "NOT_STARTED" },
+        { id: second.id, sequence: second.sequence, name: second.name, status: "NOT_STARTED" },
+      ]);
+      expect((await reload(task.id)).dependsOn.map((item) => item.id)).toEqual([
+        first.id,
+        second.id,
+      ]);
+    });
+
+    it("gates In Progress and Completed moves until every prerequisite is completed", async () => {
+      const prerequisite = await create("Workflow prerequisite");
+
+      await expect(
+        repository.createForMember(depsBoardId, ids.contributor, {
+          name: "Blocked create",
+          description: null,
+          status: "COMPLETED",
+          priority: "MEDIUM",
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: [prerequisite.id],
+        }),
+      ).resolves.toEqual({ kind: "DEPENDENCIES_INCOMPLETE" });
+
+      const dependent = await create("Blocked dependent", [prerequisite.id]);
+      for (const status of ["IN_PROGRESS", "COMPLETED"] as const) {
+        await expect(setStatus(dependent, status)).resolves.toEqual({
+          kind: "DEPENDENCIES_INCOMPLETE",
+        });
+      }
+      expect(await reload(dependent.id)).toMatchObject({
+        status: "NOT_STARTED",
+        version: dependent.version,
+      });
+
+      // Parking the dependent while the prerequisite is open is not a move forward.
+      await expect(setStatus(dependent, "ARCHIVED")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "ARCHIVED" },
+      });
+
+      await expect(setStatus(prerequisite, "COMPLETED")).resolves.toMatchObject({
+        kind: "UPDATED",
+      });
+      await expect(setStatus(await reload(dependent.id), "COMPLETED")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "COMPLETED" },
+      });
+      await expect(
+        repository.createForMember(depsBoardId, ids.contributor, {
+          name: "Permitted create",
+          description: null,
+          status: "COMPLETED",
+          priority: "MEDIUM",
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: [prerequisite.id],
+        }),
+      ).resolves.toMatchObject({ kind: "CREATED", task: { status: "COMPLETED" } });
+    });
+
+    it("keeps the edge when a prerequisite is archived and treats it as settled", async () => {
+      const prerequisite = await create("Cancelled prerequisite");
+      const dependent = await create("Depends on cancelled work", [prerequisite.id]);
+
+      await expect(setStatus(prerequisite, "ARCHIVED")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "ARCHIVED" },
+      });
+      // The edge survives archiving, so the dependency stays visible instead of
+      // disappearing and taking the record of unfinished work with it.
+      expect((await reload(dependent.id)).dependsOn).toEqual([
+        {
+          id: prerequisite.id,
+          sequence: prerequisite.sequence,
+          name: prerequisite.name,
+          status: "ARCHIVED",
+        },
+      ]);
+      await expect(setStatus(dependent, "IN_PROGRESS")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "IN_PROGRESS" },
+      });
+    });
+
+    it("reports a loop instead of the status gate when one edit would do both", async () => {
+      const openPrerequisite = await create("Open prerequisite");
+      const task = await create("Gated dependent", [openPrerequisite.id]);
+      const downstream = await create("Downstream", [task.id]);
+
+      // Completing while adding the edge that closes the loop is both a gated move and a
+      // cycle; the loop is the actionable answer.
+      const current = await reload(task.id);
+      await expect(
+        repository.updateForMember(current.id, ids.contributor, {
+          name: current.name,
+          description: current.description,
+          status: "COMPLETED",
+          priority: current.priority,
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: [...current.dependsOn.map((dependency) => dependency.id), downstream.id],
+          version: current.version,
+        }),
+      ).resolves.toEqual({ kind: "DEPENDENCY_CYCLE" });
+      expect(await reload(task.id)).toMatchObject({
+        status: "NOT_STARTED",
+        version: current.version,
+      });
+    });
+
+    it("leaves an unchanged status editable when a prerequisite drifts back", async () => {
+      const prerequisite = await create("Drifting prerequisite");
+      const dependent = await create("Progressed dependent", [prerequisite.id]);
+      await expect(setStatus(prerequisite, "COMPLETED")).resolves.toMatchObject({
+        kind: "UPDATED",
+      });
+      await expect(setStatus(dependent, "IN_PROGRESS")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "IN_PROGRESS" },
+      });
+
+      await expect(setStatus(await reload(prerequisite.id), "NOT_STARTED")).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { status: "NOT_STARTED" },
+      });
+
+      const progressed = await reload(dependent.id);
+      await expect(
+        repository.updateForMember(progressed.id, ids.contributor, {
+          name: "Renamed while progressed",
+          description: progressed.description,
+          status: progressed.status,
+          priority: progressed.priority,
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: progressed.dependsOn.map((dependency) => dependency.id),
+          version: progressed.version,
+        }),
+      ).resolves.toMatchObject({
+        kind: "UPDATED",
+        task: { name: "Renamed while progressed" },
+      });
+
+      // Moving again is still gated by the prerequisite that drifted back.
+      await expect(setStatus(await reload(dependent.id), "COMPLETED")).resolves.toEqual({
+        kind: "DEPENDENCIES_INCOMPLETE",
+      });
+    });
+
+    it("rejects a dependency on another board's task or an unknown task", async () => {
+      await expect(
+        repository.createForMember(depsBoardId, ids.contributor, {
+          name: "Cross-board",
+          description: null,
+          status: "NOT_STARTED",
+          priority: "MEDIUM",
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: [otherBoardTaskId],
+        }),
+      ).resolves.toEqual({ kind: "DEPENDENCY_NOT_FOUND" });
+      const task = await create("Local");
+      await expect(
+        setDependencies(task, ["01900000-0000-7000-8000-0000000005ff"]),
+      ).resolves.toEqual({ kind: "DEPENDENCY_NOT_FOUND" });
+      expect(await reload(task.id)).toMatchObject({ version: task.version, dependsOn: [] });
+    });
+
+    it("rejects direct and transitive cycles without changing the task", async () => {
+      const a = await create("Cycle A");
+      const b = await create("Cycle B", [a.id]);
+      const c = await create("Cycle C", [b.id]);
+      await expect(setDependencies(a, [b.id])).resolves.toEqual({ kind: "DEPENDENCY_CYCLE" });
+      await expect(setDependencies(a, [c.id])).resolves.toEqual({ kind: "DEPENDENCY_CYCLE" });
+      expect(await reload(a.id)).toMatchObject({ version: a.version, dependsOn: [] });
+
+      // Removing C -> B breaks the chain, after which A may depend on C.
+      const cleared = await setDependencies(c, []);
+      expect(cleared).toMatchObject({ kind: "UPDATED", task: { dependsOn: [] } });
+      await expect(setDependencies(a, [c.id])).resolves.toMatchObject({ kind: "UPDATED" });
+    });
+
+    it("lets only one of two concurrent opposite edges win", async () => {
+      const left = await create("Race left");
+      const right = await create("Race right");
+      const results = await Promise.all([
+        setDependencies(left, [right.id]),
+        setDependencies(right, [left.id]),
+      ]);
+      expect(results.map((result) => result.kind).sort()).toEqual(["DEPENDENCY_CYCLE", "UPDATED"]);
+      const edges = await prisma.taskDependency.count({
+        where: { taskId: { in: [left.id, right.id] } },
+      });
+      expect(edges).toBe(1);
+    });
+
+    it("keeps the dependency set when a stale version loses", async () => {
+      const prerequisite = await create("Stale prerequisite");
+      const task = await create("Stale dependent", [prerequisite.id]);
+      const renamed = await setDependencies(task, [prerequisite.id]);
+      expect(renamed.kind).toBe("UPDATED");
+      await expect(setDependencies(task, [], task.version)).resolves.toEqual({
+        kind: "VERSION_CONFLICT",
+      });
+      expect((await reload(task.id)).dependsOn.map((item) => item.id)).toEqual([prerequisite.id]);
+    });
+
+    it("drops edges when a prerequisite is deleted", async () => {
+      const prerequisite = await create("Deleted prerequisite");
+      const task = await create("Survivor", [prerequisite.id]);
+      await expect(
+        repository.deleteForMember(prerequisite.id, ids.contributor, prerequisite.version),
+      ).resolves.toBe("DELETED");
+      expect((await reload(task.id)).dependsOn).toEqual([]);
+    });
+
+    it("enforces same-board edges, no self-edges, and non-blank descriptions in PostgreSQL", async () => {
+      const task = await create("Constraint target");
+      await expect(
+        prisma.taskDependency.create({
+          data: { boardId: depsBoardId, taskId: task.id, dependsOnTaskId: task.id },
+        }),
+      ).rejects.toThrow(/task_dependency_not_self/);
+      await expect(
+        prisma.taskDependency.create({
+          data: { boardId: depsBoardId, taskId: task.id, dependsOnTaskId: otherBoardTaskId },
+        }),
+      ).rejects.toThrow();
+      await expect(
+        prisma.task.update({ where: { id: task.id }, data: { description: "" } }),
+      ).rejects.toThrow(/task_description_length/);
     });
   });
 });
