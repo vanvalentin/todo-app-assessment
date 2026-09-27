@@ -1,20 +1,21 @@
 import * as Popover from "@radix-ui/react-popover";
 import * as Select from "@radix-ui/react-select";
 import { useId, useState } from "react";
-import type { ActiveTaskStatus, TaskPriority, UserPreview } from "@ksat/contracts";
+import type { TaskPriority, TaskStatus, UserPreview } from "@ksat/contracts";
 import { Avatar } from "../../components/Avatar/Avatar";
 import calendarIcon from "../../assets/tasks/calendar.svg";
 import checkIcon from "../../assets/tasks/check.svg";
 import pillChevron from "../../assets/tasks/pill-chevron.svg";
 import priorityIcon from "../../assets/tasks/priority-bars.svg";
-import { TASK_COLUMNS, PRIORITY_LABELS, describeDueDate } from "./taskBoard";
+import { ARCHIVE_COLUMN, TASK_COLUMNS, PRIORITY_LABELS, describeDueDate } from "./taskBoard";
 import type { BoardMemberOption } from "./useBoardMembers";
 import styles from "./PropertyPills.module.scss";
 
-const STATUS_TONE: Record<ActiveTaskStatus, string> = {
+const STATUS_TONE: Record<TaskStatus, string> = {
   NOT_STARTED: styles.dotNotStarted,
   IN_PROGRESS: styles.dotInProgress,
   COMPLETED: styles.dotCompleted,
+  ARCHIVED: styles.dotArchived,
 };
 
 interface PillTriggerProps {
@@ -68,17 +69,24 @@ function MenuItem({ value, children }: { value: string; children: React.ReactNod
 }
 
 interface StatusPillProps {
-  readonly value: ActiveTaskStatus;
-  readonly onChange: (value: ActiveTaskStatus) => void;
+  readonly value: TaskStatus;
+  readonly onChange: (value: TaskStatus) => void;
   readonly disabled?: boolean;
+  /** True only while editing an existing task: a new task can never start Archived. */
+  readonly allowArchive?: boolean;
 }
 
-export function StatusPill({ value, onChange, disabled }: StatusPillProps) {
-  const current = TASK_COLUMNS.find((column) => column.status === value);
+/**
+ * The status menu offers the three active columns, plus Archived while editing an
+ * existing task (archiving or restoring it is one versioned move, like any other).
+ */
+export function StatusPill({ value, onChange, disabled, allowArchive = false }: StatusPillProps) {
+  const options = allowArchive ? [...TASK_COLUMNS, ARCHIVE_COLUMN] : TASK_COLUMNS;
+  const current = options.find((column) => column.status === value);
   return (
     <Select.Root
       value={value}
-      onValueChange={(next) => onChange(next as ActiveTaskStatus)}
+      onValueChange={(next) => onChange(next as TaskStatus)}
       disabled={disabled}
     >
       <PillTrigger label="Status">
@@ -86,7 +94,7 @@ export function StatusPill({ value, onChange, disabled }: StatusPillProps) {
         <Select.Value>{current?.title ?? value}</Select.Value>
       </PillTrigger>
       <SelectMenu heading="Change status">
-        {TASK_COLUMNS.map((column) => (
+        {options.map((column) => (
           <MenuItem key={column.status} value={column.status}>
             <span className={`${styles.dot} ${STATUS_TONE[column.status]}`} aria-hidden="true" />
             <Select.ItemText>{column.title}</Select.ItemText>
@@ -252,7 +260,12 @@ export function DueDatePill({ value, onChange, disabled, now }: DueDatePillProps
             id={inputId}
             type="date"
             value={value ?? ""}
-            onChange={(event) => onChange(event.target.value === "" ? null : event.target.value)}
+            onChange={(event) => {
+              onChange(event.target.value === "" ? null : event.target.value);
+              // Selecting a date completes the popover interaction so the modal
+              // footer remains clickable for keyboard and browser journeys.
+              setOpen(false);
+            }}
           />
           <button
             className={styles.clearButton}

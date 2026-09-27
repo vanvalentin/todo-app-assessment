@@ -3,7 +3,11 @@ import {
   taskListResponseSchema,
   taskSchema,
   updateTaskRequestSchema,
+  type ActiveTaskStatus,
   type CreateTaskRequestInput,
+  type TaskDueFilter,
+  type TaskPriority,
+  type TaskSort,
   type UpdateTaskRequest,
 } from "@ksat/contracts";
 import { apiRequest, apiRequestNoContent } from "./client";
@@ -11,8 +15,33 @@ import { apiRequest, apiRequestNoContent } from "./client";
 /** The API caps a page at 100 items; a board asks for a full first page. */
 const MAX_PAGE_SIZE = 100;
 
-function pageQuery(cursor: string | null | undefined): string {
+/**
+ * The board-list search/filter/sort/archive parameters, resolved from URL state.
+ * Shaped after the shared `taskListQuerySchema`, minus pagination (handled here).
+ */
+export interface TaskListFilterParams {
+  readonly q?: string;
+  /** A member id, or "none" for unassigned. */
+  readonly assignee?: string;
+  readonly priority?: TaskPriority;
+  readonly status?: ActiveTaskStatus;
+  readonly includeArchived?: boolean;
+  readonly due?: TaskDueFilter;
+  /** The viewer's local calendar day; required only alongside `due`. */
+  readonly today?: string;
+  readonly sort?: TaskSort;
+}
+
+function taskListQuery(filters: TaskListFilterParams, cursor: string | null | undefined): string {
   const params = new URLSearchParams();
+  if (filters.q !== undefined && filters.q !== "") params.set("q", filters.q);
+  if (filters.assignee !== undefined) params.set("assignee", filters.assignee);
+  if (filters.priority !== undefined) params.set("priority", filters.priority);
+  if (filters.status !== undefined) params.set("status", filters.status);
+  if (filters.includeArchived === true) params.set("includeArchived", "true");
+  if (filters.due !== undefined) params.set("due", filters.due);
+  if (filters.today !== undefined) params.set("today", filters.today);
+  if (filters.sort !== undefined) params.set("sort", filters.sort);
   if (cursor !== undefined && cursor !== null) params.set("cursor", cursor);
   params.set("limit", String(MAX_PAGE_SIZE));
   return `?${params.toString()}`;
@@ -20,10 +49,11 @@ function pageQuery(cursor: string | null | undefined): string {
 
 export function fetchBoardTasks(
   boardId: string,
+  filters: TaskListFilterParams,
   options: { cursor?: string | null; signal?: AbortSignal } = {},
 ) {
   return apiRequest(
-    `/api/v1/boards/${encodeURIComponent(boardId)}/tasks${pageQuery(options.cursor)}`,
+    `/api/v1/boards/${encodeURIComponent(boardId)}/tasks${taskListQuery(filters, options.cursor)}`,
     taskListResponseSchema,
     { signal: options.signal },
   );

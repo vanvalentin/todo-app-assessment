@@ -129,12 +129,34 @@
   border: 1px solid var(--color-line);
   border-radius: 0.5rem;
   color: var(--color-ink-strong);
+  cursor: pointer;
   display: inline-flex;
   font-size: 0.75rem;
   font-weight: 500;
   gap: 0.375rem;
   min-block-size: var(--control-height);
   padding-inline: 0.8125rem;
+
+  &[aria-pressed="true"] {
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
+  }
+}
+
+.clearFilters {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-muted-strong);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 500;
+  min-block-size: var(--control-height);
+  padding-inline: 0.5rem;
+  text-decoration: underline;
+
+  &:hover {
+    color: var(--color-ink-strong);
+  }
 }
 
 .newTask {

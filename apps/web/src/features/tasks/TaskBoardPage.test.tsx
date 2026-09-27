@@ -94,6 +94,7 @@ describe("TaskBoardPage", () => {
   it("reports a board that is unavailable without leaking why", async () => {
     server.use(
       http.get(TASKS_PATH, () => HttpResponse.json({ items: [], nextCursor: null })),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [], nextCursor: null })),
       http.get(BOARD_PATH, () =>
         HttpResponse.json(
           {
@@ -121,6 +122,7 @@ describe("TaskBoardPage", () => {
     let attempts = 0;
     server.use(
       http.get(BOARD_PATH, () => HttpResponse.json(buildBoard())),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [], nextCursor: null })),
       http.get(TASKS_PATH, () => {
         attempts += 1;
         if (attempts === 1) return HttpResponse.error();
@@ -279,5 +281,124 @@ describe("TaskBoardPage", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(taskButton(notStarted.name)).toHaveFocus());
+  });
+
+  it("sends the selected priority filter to the API and reflects the filtered results", async () => {
+    let lastQuery = "";
+    server.use(
+      http.get(BOARD_PATH, () => HttpResponse.json(buildBoard())),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [buildMember()], nextCursor: null })),
+      http.get(TASKS_PATH, ({ request }) => {
+        const url = new URL(request.url);
+        lastQuery = url.search;
+        const priority = url.searchParams.get("priority");
+        const items = priority === "HIGH" ? [] : [notStarted, completed];
+        return HttpResponse.json({ items, nextCursor: null });
+      }),
+    );
+    renderBoard();
+    await within(await column("Not Started")).findByText(notStarted.name);
+
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by priority" }), "HIGH");
+
+    await waitFor(() => expect(lastQuery).toContain("priority=HIGH"));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by priority" }), "");
+    expect(
+      await within(await column("Not Started")).findByText(notStarted.name),
+    ).toBeInTheDocument();
+  });
+
+  it("cancels a stale search so an earlier response never overwrites a later one", async () => {
+    server.use(
+      http.get(BOARD_PATH, () => HttpResponse.json(buildBoard())),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [buildMember()], nextCursor: null })),
+      http.get(TASKS_PATH, async ({ request }) => {
+        const url = new URL(request.url);
+        const q = url.searchParams.get("q");
+        if (q === "map") {
+          await new Promise((resolve) => window.setTimeout(resolve, 300));
+          return HttpResponse.json({ items: [completed], nextCursor: null });
+        }
+        if (q === "curate") return HttpResponse.json({ items: [notStarted], nextCursor: null });
+        return HttpResponse.json({ items: [notStarted, completed], nextCursor: null });
+      }),
+    );
+    renderBoard();
+    await within(await column("Not Started")).findByText(notStarted.name);
+
+    const user = userEvent.setup({ delay: null });
+    const search = screen.getByRole("searchbox", { name: "Search tasks" });
+    await user.type(search, "map");
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    await user.clear(search);
+    await user.type(search, "curate");
+    await waitFor(() => expect(search).toHaveValue("curate"), { timeout: 1000 });
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+
+    expect(
+      await within(await column("Not Started")).findByText(notStarted.name),
+    ).toBeInTheDocument();
+    expect(within(await column("Completed")).queryByText(completed.name)).not.toBeInTheDocument();
+
+    // The stale "map" response resolves later; it must not replace the "curate" results.
+    expect(within(await column("Not Started")).getByText(notStarted.name)).toBeInTheDocument();
+    expect(within(await column("Completed")).queryByText(completed.name)).not.toBeInTheDocument();
+  });
+
+  it("shows the Archived column only when toggled, and archives/restores through the modal", async () => {
+    const archivedTask = buildTask({
+      id: "01900000-0000-7000-8000-000000000403",
+      sequence: 3,
+      name: "Old booth plan",
+      status: "ARCHIVED",
+    });
+    const byId = new Map<string, Task>([
+      [notStarted.id, notStarted],
+      [archivedTask.id, archivedTask],
+    ]);
+    server.use(
+      http.get(BOARD_PATH, () => HttpResponse.json(buildBoard())),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [buildMember()], nextCursor: null })),
+      http.get(TASKS_PATH, ({ request }) => {
+        const url = new URL(request.url);
+        const includeArchived = url.searchParams.get("includeArchived") === "true";
+        const items = [...byId.values()].filter(
+          (item) => includeArchived || item.status !== "ARCHIVED",
+        );
+        return HttpResponse.json({ items, nextCursor: null });
+      }),
+      http.patch(TASK_PATTERN, async ({ request, params }) => {
+        const taskId = String(params.taskId);
+        const existing = byId.get(taskId);
+        if (!existing) return new HttpResponse(null, { status: 404 });
+        const body = (await request.json()) as { status: Task["status"] };
+        const updated = { ...existing, status: body.status, version: existing.version + 1 };
+        byId.set(taskId, updated);
+        return HttpResponse.json(updated);
+      }),
+    );
+    renderBoard();
+    await within(await column("Not Started")).findByText(notStarted.name);
+    expect(screen.queryByRole("heading", { level: 2, name: "Archived" })).not.toBeInTheDocument();
+
+    const dialog = await openTask(notStarted.name);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Archive task" }));
+
+    expect(await screen.findByText(`Archived \u201c${notStarted.name}\u201d.`)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
+    const archivedColumn = await column("Archived");
+    expect(await within(archivedColumn).findByText(archivedTask.name)).toBeInTheDocument();
+
+    fireEvent.click(within(archivedColumn).getByRole("button", { name: archivedTask.name }));
+    const editDialog = await screen.findByRole("dialog", {}, { timeout: 2000 });
+    await choosePill(editDialog, "Status", "In Progress");
+    fireEvent.click(within(editDialog).getByRole("button", { name: /Save changes/ }));
+
+    expect(
+      await screen.findByText(`Restored \u201c${archivedTask.name}\u201d to In Progress.`),
+    ).toBeInTheDocument();
   });
 });

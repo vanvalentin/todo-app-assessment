@@ -88,6 +88,9 @@ describe("App routing", () => {
       http.get(`/api/v1/boards/${BOARD_ID}/tasks`, () =>
         HttpResponse.json({ items: [], nextCursor: null }),
       ),
+      http.get(`/api/v1/boards/${BOARD_ID}/members`, () =>
+        HttpResponse.json({ items: [], nextCursor: null }),
+      ),
     );
 
     window.history.pushState({}, "", `/boards/${BOARD_ID}`);

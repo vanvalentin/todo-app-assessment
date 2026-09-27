@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 4b (people and dates) is complete. Tasks now carry a board-member assignee and reporter plus a calendar due date; the Figma new/edit modals (`1:1045`, `1:479`) replace the interim dialog, cards show assignee/date metadata, and the browser journey creates, edits, persists, and deletes through the full modal. Search/filter/sort/archive, descriptions, dependencies, and attachments remain in later phases.
+> **Project status:** delivery phase 4c (finding work) is complete. Tasks now support URL-backed search, assignee/priority/status/due filters, sorting, archive visibility, and stale-search cancellation; 4c preserves the people/date-aware modals and browser journey. Descriptions, dependencies, attachments, and recurrence remain in later phases.
 
 ## Product scope
 
@@ -267,7 +267,7 @@ Phase 4a is the first Kanban slice: a board screen with three active columns, ta
 | `/boards/:boardId/settings` | Board overview (phase 3) | Board metadata, membership summary, and the admin edit panel moved here when the board route became the Kanban board. |
 | `/boards/:boardId/members` | Board members (Figma `1:1531`) | Unchanged. |
 
-Search, assignee/priority filters, sorting, and the archive toggle are rendered inert with an explanation, so the composition matches the frame without faking behaviour. `ARCHIVED` tasks are excluded from every board read until the archive slice.
+Phase 4c makes the control strip functional: search, assignee/priority/status/due filters, sorting, and the explicit show-archived toggle are URL-backed and shareable. `ARCHIVED` tasks remain excluded unless `includeArchived=true`; when shown, they occupy a fourth Archived column.
 
 ### Endpoints and authorization
 
@@ -297,7 +297,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 - No drag auto-scroll: `DndContext` runs with `autoScroll={false}`, so a card can be carried anywhere on screen — including outside the board — without the page or the column row scrolling underneath it. The trade-off is deliberate: on narrow screens the column row has to be scrolled to a column before dropping onto it.
 - The keyboard-equivalent path is opening the card and changing its **Column** field, which moves the task the same way.
 - Movement, edit, and delete results are reported in a success toast (`Moved “…” to In Progress.`, `Saved “…”.`, `Deleted “…”.`) instead of an inline paragraph. This is intentional feedback rather than placeholder copy: pointer and drag results are visual, so the same text tells keyboard and screen-reader users whether the change succeeded. The toast is portaled to the document body, so it never displaces the board or joins its scroll containers, and it keeps its `role=status`/`role=alert` regions mounted so assistive technology announces every message. Confirmations auto-dismiss after five seconds, pausing while the pointer or focus is inside; rejections stay until they are dismissed, and the dismiss target meets the 24px minimum target size.
-- Control strip: the search field, the three filter controls, the archive toggle, and the primary CTA share one `--control-height` token so the strip aligns.
+- Control strip: search, assignee/priority/status/due filters, sorting, the archive toggle, and the primary CTA share one `--control-height` token so the strip aligns. Filter state is URL-backed; `/` focuses search and stale searches are cancelled.
 - Responsive columns: columns use the 389px design width, shrink to a 20rem minimum to share a narrower viewport, and the row scrolls horizontally below that so the page itself never scrolls sideways. Reduced-motion preferences disable the arrival highlight and the column transition.
 - Testing Library/MSW coverage covers loading, empty, error/retry, not-found, validation, delete confirmation, optimistic rollback, conflict recovery, click-to-edit focus return, and the toast lifecycle (persistent live regions, auto-dismiss, hover pause, dismissal); the control-height alignment, hover border, and pointer cursor are asserted in the browser journey.
 
@@ -531,7 +531,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 4. **Kanban walking skeleton**
    - **4a — Task board (complete):** task board page (`1:128`); create, edit, and delete tasks with name, status, and priority; move tasks between columns; optimistic concurrency. Also adds CI and the first Playwright journey: sign up → create board → create task → move it.
    - **4b — People and dates (complete):** assignee and reporter limited to board members, calendar due dates, card metadata, and the responsive new/edit task modals (`1:1045`, `1:479`). A card click opens the full modal with deletion, conflict reload, create-more, and Radix-powered keyboard-accessible property pills.
-   - **4c — Finding work:** search, filter, and sort in URL search parameters; archive and an explicit “show archived” toggle; cancellation of stale searches.
+   - **4c — Finding work (complete):** URL-backed name/sequence search; assignee, priority, status, and viewer-local due filters; due-date/priority/newest/oldest/name sorting; archive/restore with an explicit show-archived toggle; keyset pagination and stale-search cancellation.
 5. **Task detail**
    - **5a — Content and dependencies:** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
    - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.

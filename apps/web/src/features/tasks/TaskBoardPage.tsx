@@ -9,7 +9,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { activeTaskStatusSchema, type ActiveTaskStatus, type Task } from "@ksat/contracts";
+import { taskStatusSchema, type Task, type TaskStatus } from "@ksat/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import archiveIcon from "../../assets/tasks/archive-toggle.svg";
@@ -29,12 +29,14 @@ import { TaskColumn } from "./TaskColumn";
 import { TaskDeleteDialog } from "./TaskDeleteDialog";
 import { TaskModal } from "./TaskModal";
 import {
-  TASK_COLUMNS,
   columnTitle,
   groupTasksByStatus,
   taskBoardErrorMessage,
   taskMutationErrorMessage,
+  visibleColumns,
 } from "./taskBoard";
+import { useBoardMembers } from "./useBoardMembers";
+import { useTaskBoardSearch } from "./useTaskBoardSearch";
 import { useTaskMutations, type TaskEditValues } from "./useTaskMutations";
 import styles from "./TaskBoardPage.module.scss";
 
@@ -46,9 +48,17 @@ interface TaskNotice {
 }
 
 /** Column ids arrive from droppable ids, so they are validated rather than asserted. */
-function activeStatusOf(value: unknown): ActiveTaskStatus | null {
-  const parsed = activeTaskStatusSchema.safeParse(value);
+function statusOf(value: unknown): TaskStatus | null {
+  const parsed = taskStatusSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+/** True while an editable text control (or an open dialog) should own the keystroke. */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
 export function TaskBoardPage() {
@@ -61,14 +71,17 @@ export function TaskBoardPage() {
         avatarSeed: session.user.avatarSeed ?? session.user.id,
       }
     : null;
+  const search = useTaskBoardSearch(currentUser?.id ?? null);
+  const { members } = useBoardMembers(boardId, boardId.length > 0);
   const boardQuery = useQuery({
     queryKey: queryKeys.board(boardId),
     queryFn: ({ signal }) => fetchBoard(boardId, signal),
     enabled: boardId.length > 0,
   });
   const tasksQuery = useInfiniteQuery({
-    queryKey: queryKeys.boardTasks(boardId),
-    queryFn: ({ pageParam, signal }) => fetchBoardTasks(boardId, { cursor: pageParam, signal }),
+    queryKey: queryKeys.boardTasks(boardId, search.filters),
+    queryFn: ({ pageParam, signal }) =>
+      fetchBoardTasks(boardId, search.filters, { cursor: pageParam, signal }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
     enabled: boardId.length > 0,
@@ -85,6 +98,7 @@ export function TaskBoardPage() {
   const createTriggerRef = useRef<HTMLElement | null>(null);
   const newTaskRef = useRef<HTMLButtonElement | null>(null);
   const movedTimerRef = useRef<number | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   useEffect(
@@ -94,9 +108,24 @@ export function TaskBoardPage() {
     [],
   );
 
+  const isDialogOpen = createOpen || editing !== null || pendingDelete !== null;
+
+  // "/" focuses search, matching the placeholder hint, unless a text control or a
+  // dialog already owns keyboard input.
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "/" || isDialogOpen || isEditableTarget(event.target)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isDialogOpen]);
+
   const board = boardQuery.data;
   const tasks = tasksQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const grouped = groupTasksByStatus(tasks);
+  const columns = visibleColumns(search.includeArchived);
   const draggedTask = tasks.find((task) => task.id === draggingId) ?? null;
   const isNotFound =
     boardQuery.isError && boardQuery.error instanceof ApiError && boardQuery.error.status === 404;
@@ -129,7 +158,7 @@ export function TaskBoardPage() {
     movedTimerRef.current = window.setTimeout(() => setMovedTaskId(null), 1_500);
   };
 
-  const moveTask = async (task: Task, status: ActiveTaskStatus) => {
+  const moveTask = async (task: Task, status: TaskStatus) => {
     dismissNotice();
     try {
       await updateMutation.mutateAsync({
@@ -141,8 +170,15 @@ export function TaskBoardPage() {
         reporter: task.reporter,
         dueDate: task.dueDate,
       });
-      flagMovedTask(task.id);
-      notify("success", `Moved “${task.name}” to ${columnTitle(status)}.`);
+      if (status === "ARCHIVED") {
+        notify("success", `Archived \u201c${task.name}\u201d.`);
+      } else if (task.status === "ARCHIVED") {
+        flagMovedTask(task.id);
+        notify("success", `Restored \u201c${task.name}\u201d to ${columnTitle(status)}.`);
+      } else {
+        flagMovedTask(task.id);
+        notify("success", `Moved \u201c${task.name}\u201d to ${columnTitle(status)}.`);
+      }
     } catch (error) {
       notify("error", taskMutationErrorMessage(error));
     }
@@ -151,11 +187,19 @@ export function TaskBoardPage() {
   const submitEdit = async (values: TaskEditValues) => {
     await updateMutation.mutateAsync(values);
     if (values.status === values.task.status) {
-      notify("success", `Saved “${values.name}”.`);
+      notify("success", `Saved \u201c${values.name}\u201d.`);
+      return;
+    }
+    if (values.status === "ARCHIVED") {
+      notify("success", `Archived \u201c${values.name}\u201d.`);
+      return;
+    }
+    if (values.task.status === "ARCHIVED") {
+      notify("success", `Restored \u201c${values.name}\u201d to ${columnTitle(values.status)}.`);
       return;
     }
     flagMovedTask(values.task.id);
-    notify("success", `Moved “${values.name}” to ${columnTitle(values.status)}.`);
+    notify("success", `Moved \u201c${values.name}\u201d to ${columnTitle(values.status)}.`);
   };
 
   const closeEdit = () => {
@@ -176,7 +220,7 @@ export function TaskBoardPage() {
 
   const handleDragEnd = (event: DragEndEvent) => {
     setDraggingId(null);
-    const status = activeStatusOf(event.over?.id);
+    const status = statusOf(event.over?.id);
     if (status === null) return;
     const task = tasks.find((candidate) => candidate.id === String(event.active.id));
     if (!task || task.status === status) return;
@@ -231,7 +275,7 @@ export function TaskBoardPage() {
               disabled={boardQuery.isFetching}
               onClick={() => void boardQuery.refetch()}
             >
-              {boardQuery.isFetching ? "Retrying…" : "Retry"}
+              {boardQuery.isFetching ? "Retrying\u2026" : "Retry"}
             </button>
           </section>
         ) : null}
@@ -257,31 +301,108 @@ export function TaskBoardPage() {
               <div className={styles.searchField}>
                 <img src={searchIcon} alt="" width={13.5} height={13.5} />
                 <input
+                  ref={searchInputRef}
                   type="search"
                   placeholder="Search tasks… [ / ]"
                   aria-label="Search tasks"
-                  aria-describedby="board-deferred-controls"
-                  disabled
+                  value={search.searchInput}
+                  onChange={(event) => search.setSearchInput(event.target.value)}
                 />
               </div>
               <div className={styles.controlGroup}>
-                {["Assignee: All", "Priority: All", "Sort: Due date"].map((label) => (
-                  <span className={styles.selectShell} key={label}>
-                    <select aria-label={label} aria-describedby="board-deferred-controls" disabled>
-                      <option>{label}</option>
-                    </select>
-                    <img src={chevronIcon} alt="" width={18} height={18} />
-                  </span>
-                ))}
+                <span className={styles.selectShell}>
+                  <select
+                    aria-label="Filter by assignee"
+                    value={search.assignee}
+                    onChange={(event) => search.setAssignee(event.target.value)}
+                  >
+                    <option value="">Assignee: All</option>
+                    <option value="me">Assignee: Me</option>
+                    <option value="none">Assignee: Unassigned</option>
+                    {members.map((member) => (
+                      <option key={member.id} value={member.id}>
+                        Assignee: {member.name}
+                      </option>
+                    ))}
+                  </select>
+                  <img src={chevronIcon} alt="" width={18} height={18} />
+                </span>
+                <span className={styles.selectShell}>
+                  <select
+                    aria-label="Filter by priority"
+                    value={search.priority}
+                    onChange={(event) =>
+                      search.setPriority(event.target.value as typeof search.priority)
+                    }
+                  >
+                    <option value="">Priority: All</option>
+                    <option value="HIGH">Priority: High</option>
+                    <option value="MEDIUM">Priority: Medium</option>
+                    <option value="LOW">Priority: Low</option>
+                  </select>
+                  <img src={chevronIcon} alt="" width={18} height={18} />
+                </span>
+                <span className={styles.selectShell}>
+                  <select
+                    aria-label="Filter by status"
+                    value={search.status}
+                    onChange={(event) =>
+                      search.setStatus(event.target.value as typeof search.status)
+                    }
+                  >
+                    <option value="">Status: All</option>
+                    <option value="NOT_STARTED">Status: Not Started</option>
+                    <option value="IN_PROGRESS">Status: In Progress</option>
+                    <option value="COMPLETED">Status: Completed</option>
+                  </select>
+                  <img src={chevronIcon} alt="" width={18} height={18} />
+                </span>
+                <span className={styles.selectShell}>
+                  <select
+                    aria-label="Filter by due date"
+                    value={search.due}
+                    onChange={(event) => search.setDue(event.target.value as typeof search.due)}
+                  >
+                    <option value="">Due: Any</option>
+                    <option value="OVERDUE">Due: Overdue</option>
+                    <option value="TODAY">Due: Today</option>
+                    <option value="NEXT_7_DAYS">Due: Next 7 days</option>
+                    <option value="NONE">Due: No due date</option>
+                  </select>
+                  <img src={chevronIcon} alt="" width={18} height={18} />
+                </span>
+                <span className={styles.selectShell}>
+                  <select
+                    aria-label="Sort tasks by"
+                    value={search.sort}
+                    onChange={(event) => search.setSort(event.target.value as typeof search.sort)}
+                  >
+                    <option value="DUE_DATE">Sort: Due date</option>
+                    <option value="PRIORITY">Sort: Priority</option>
+                    <option value="NEWEST">Sort: Newest</option>
+                    <option value="OLDEST">Sort: Oldest</option>
+                    <option value="NAME">Sort: Name (A–Z)</option>
+                  </select>
+                  <img src={chevronIcon} alt="" width={18} height={18} />
+                </span>
                 <button
                   className={styles.archiveToggle}
                   type="button"
-                  aria-describedby="board-deferred-controls"
-                  disabled
+                  aria-pressed={search.includeArchived}
+                  onClick={search.toggleArchived}
                 >
                   <img src={archiveIcon} alt="" width={11.667} height={11.667} />
-                  <span>Archive</span>
+                  <span>{search.includeArchived ? "Hide archived" : "Show archived"}</span>
                 </button>
+                {search.hasActiveFilters ? (
+                  <button
+                    className={styles.clearFilters}
+                    type="button"
+                    onClick={search.clearFilters}
+                  >
+                    Clear filters
+                  </button>
+                ) : null}
                 <button
                   ref={newTaskRef}
                   className={styles.newTask}
@@ -294,10 +415,6 @@ export function TaskBoardPage() {
                   <span>New Task</span>
                 </button>
               </div>
-              <p className="visually-hidden" id="board-deferred-controls">
-                Search, assignee and priority filters, sorting, and the archive column arrive in a
-                later delivery phase. Archive stays hidden until then.
-              </p>
             </section>
 
             {tasksQuery.isError ? (
@@ -314,7 +431,7 @@ export function TaskBoardPage() {
                   disabled={tasksQuery.isFetching}
                   onClick={() => void tasksQuery.refetch()}
                 >
-                  {tasksQuery.isFetching ? "Retrying…" : "Retry"}
+                  {tasksQuery.isFetching ? "Retrying\u2026" : "Retry"}
                 </button>
               </section>
             ) : null}
@@ -322,7 +439,7 @@ export function TaskBoardPage() {
             {tasksQuery.isPending ? (
               <div className={styles.columns} role="status" aria-live="polite">
                 <span className="visually-hidden">Loading tasks…</span>
-                {TASK_COLUMNS.map((column) => (
+                {columns.map((column) => (
                   <div className={styles.columnSkeleton} key={column.status} aria-hidden="true">
                     <div className={styles.skeletonColumnHeader} />
                     <div className={styles.skeletonCard} />
@@ -337,12 +454,24 @@ export function TaskBoardPage() {
                 {tasks.length === 0 ? (
                   <section className={styles.emptyBoard} aria-labelledby="tasks-empty-heading">
                     <h2 className={styles.stateTitle} id="tasks-empty-heading">
-                      No tasks on this board yet
+                      {search.hasActiveFilters
+                        ? "No tasks match these filters"
+                        : "No tasks on this board yet"}
                     </h2>
                     <p className={styles.stateText}>
-                      Create the first task, then move it from Not Started through In Progress to
-                      Completed.
+                      {search.hasActiveFilters
+                        ? "Try a different search term, or clear the filters to see every task."
+                        : "Create the first task, then move it from Not Started through In Progress to Completed."}
                     </p>
+                    {search.hasActiveFilters ? (
+                      <button
+                        className={styles.stateAction}
+                        type="button"
+                        onClick={search.clearFilters}
+                      >
+                        Clear filters
+                      </button>
+                    ) : null}
                   </section>
                 ) : null}
                 <DndContext
@@ -357,7 +486,7 @@ export function TaskBoardPage() {
                   onDragCancel={() => setDraggingId(null)}
                 >
                   <div className={styles.columns}>
-                    {TASK_COLUMNS.map((column) => (
+                    {columns.map((column) => (
                       <TaskColumn
                         column={column}
                         key={column.status}
@@ -381,7 +510,7 @@ export function TaskBoardPage() {
                       disabled={tasksQuery.isFetchingNextPage}
                       onClick={() => void tasksQuery.fetchNextPage()}
                     >
-                      {tasksQuery.isFetchingNextPage ? "Loading…" : "Load more tasks"}
+                      {tasksQuery.isFetchingNextPage ? "Loading\u2026" : "Load more tasks"}
                     </button>
                   </div>
                 ) : null}
@@ -422,7 +551,7 @@ export function TaskBoardPage() {
           onClose={closeDelete}
           onConfirm={async () => {
             await deleteMutation.mutateAsync(pendingDelete);
-            notify("success", `Deleted “${pendingDelete.name}”.`);
+            notify("success", `Deleted \u201c${pendingDelete.name}\u201d.`);
           }}
         />
       )}

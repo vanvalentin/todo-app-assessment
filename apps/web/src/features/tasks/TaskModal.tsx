@@ -1,11 +1,13 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
+  activeTaskStatusSchema,
   TASK_NAME_MAX_LENGTH,
   type ActiveTaskStatus,
   type CreateTaskRequestInput,
   type Task,
   type TaskPriority,
+  type TaskStatus,
   type UserPreview,
 } from "@ksat/contracts";
 import {
@@ -91,9 +93,7 @@ export function TaskModal({
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
   const [reporterError, setReporterError] = useState<string | null>(null);
 
-  const [status, setStatus] = useState<ActiveTaskStatus>(
-    task && task.status !== "ARCHIVED" ? task.status : initialStatus,
-  );
+  const [status, setStatus] = useState<TaskStatus>(task ? task.status : initialStatus);
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "MEDIUM");
   const [assignee, setAssignee] = useState<UserPreview | null>(task?.assignee ?? null);
   const [reporter, setReporter] = useState<UserPreview>(task?.reporter ?? currentUser);
@@ -119,7 +119,7 @@ export function TaskModal({
   const resetFormFrom = (latest: Task) => {
     setBaselineTask(latest);
     form.reset({ name: latest.name });
-    setStatus(latest.status === "ARCHIVED" ? initialStatus : latest.status);
+    setStatus(latest.status);
     setPriority(latest.priority);
     setAssignee(latest.assignee);
     setReporter(latest.reporter);
@@ -140,17 +140,23 @@ export function TaskModal({
     }
   };
 
-  const submit = form.handleSubmit(async (values) => {
+  /**
+   * Both the primary Save/Create submit and the one-click Archive action share this
+   * path: Archive is just a save whose status is forced to ARCHIVED, so it goes
+   * through the same name validation and error handling as any other edit.
+   */
+  const performSave = async (values: NameFormValues, statusOverride?: TaskStatus) => {
     setSubmitError(null);
     setAssigneeError(null);
     setReporterError(null);
     setIsBusy(true);
+    const effectiveStatus = statusOverride ?? status;
     try {
       if (isEditing && baselineTask) {
         await onSave({
           task: baselineTask,
           name: values.name,
-          status,
+          status: effectiveStatus,
           priority,
           assignee,
           reporter,
@@ -158,9 +164,11 @@ export function TaskModal({
         });
         onClose();
       } else {
+        // The create modal's status pill never offers ARCHIVED, so this is a
+        // runtime-checked narrowing rather than a cast, matching the create contract.
         await onCreate({
           name: values.name,
-          status,
+          status: activeTaskStatusSchema.parse(effectiveStatus),
           priority,
           assigneeId: assignee?.id ?? null,
           reporterId: reporter.id,
@@ -190,7 +198,10 @@ export function TaskModal({
     } finally {
       setIsBusy(false);
     }
-  });
+  };
+
+  const submit = form.handleSubmit((values) => performSave(values));
+  const archiveTask = form.handleSubmit((values) => performSave(values, "ARCHIVED"));
 
   const handleFormKeyDown = (event: ReactKeyboardEvent<HTMLFormElement>) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -297,6 +308,7 @@ export function TaskModal({
                   markDirty();
                 }}
                 disabled={isBusy}
+                allowArchive={isEditing}
               />
               <PriorityPill
                 value={priority}
@@ -371,19 +383,29 @@ export function TaskModal({
               ) : null}
               <div className={styles.footerTop}>
                 {isEditing && task ? (
-                  onRequestDelete === undefined ? (
-                    <span />
-                  ) : (
-                    <button
-                      className={styles.deleteButton}
-                      type="button"
-                      onClick={onRequestDelete}
-                      disabled={isBusy}
-                    >
-                      <img src={trashIcon} alt="" width={12} height={12} />
-                      Delete task
-                    </button>
-                  )
+                  <div className={styles.footerLeft}>
+                    {onRequestDelete === undefined ? null : (
+                      <button
+                        className={styles.deleteButton}
+                        type="button"
+                        onClick={onRequestDelete}
+                        disabled={isBusy}
+                      >
+                        <img src={trashIcon} alt="" width={12} height={12} />
+                        Delete task
+                      </button>
+                    )}
+                    {status === "ARCHIVED" ? null : (
+                      <button
+                        className={styles.secondary}
+                        type="button"
+                        onClick={() => void archiveTask()}
+                        disabled={isBusy}
+                      >
+                        Archive task
+                      </button>
+                    )}
+                  </div>
                 ) : (
                   <label className={styles.createMore}>
                     <input

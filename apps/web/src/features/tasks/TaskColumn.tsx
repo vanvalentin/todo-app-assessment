@@ -9,6 +9,7 @@ const TONE_CLASS = {
   neutral: styles.toneNeutral,
   progress: styles.toneProgress,
   complete: styles.toneComplete,
+  archived: styles.toneArchived,
 } as const;
 
 interface TaskColumnProps {

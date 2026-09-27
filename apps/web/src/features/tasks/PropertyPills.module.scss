@@ -90,6 +90,10 @@
   background: var(--color-status-dot-in-progress);
 }
 
+.dotArchived {
+  background: var(--color-muted-card);
+}
+
 .dotCompleted {
   background: var(--color-status-dot-completed);
 }

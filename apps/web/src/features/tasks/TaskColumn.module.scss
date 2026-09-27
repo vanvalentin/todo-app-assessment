@@ -70,6 +70,10 @@
   background: var(--color-status-completed);
 }
 
+.toneArchived {
+  background: var(--color-muted-card);
+}
+
 .title {
   font-family: var(--font-display);
   font-size: 1rem;
@@ -109,6 +113,11 @@
 .stage.toneComplete {
   background: var(--color-success-soft);
   color: var(--color-success-ink);
+}
+
+.stage.toneArchived {
+  background: var(--color-stage-soft);
+  color: var(--color-stage-ink);
 }
 
 .cards {
