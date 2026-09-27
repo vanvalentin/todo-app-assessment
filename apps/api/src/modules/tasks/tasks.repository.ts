@@ -1,9 +1,10 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import type { BoardRole, TaskPriority, TaskStatus } from "@ksat/contracts";
+import type { BoardRole, TaskPriority, TaskSort, TaskStatus } from "@ksat/contracts";
 import { generateUuid } from "../../auth/identity.js";
 import type {
   CreateTaskResult,
   DeleteTaskResult,
+  TaskListFilters,
   TaskPage,
   TaskPageRequest,
   TaskRow,
@@ -63,19 +64,108 @@ function dueDateToColumn(dueDate: string | null): Date | null {
   return dueDate === null ? null : new Date(`${dueDate}T00:00:00.000Z`);
 }
 
-/** The candidate sort order is (createdAt, id), so the cursor is a strict "after" key. */
-function cursorWhere(page: TaskPageRequest): Record<string, unknown> {
-  if (page.cursorKey === undefined || page.cursorId === undefined) return {};
-  return {
-    OR: [
-      { createdAt: { gt: new Date(page.cursorKey) } },
-      { createdAt: new Date(page.cursorKey), id: { gt: page.cursorId } },
-    ],
-  };
+/**
+ * PostgreSQL's LIKE/ILIKE default escape character is the backslash even without an
+ * explicit ESCAPE clause, so escaping it plus the two wildcard characters here keeps
+ * a search term literal through Prisma's generated `contains` predicate.
+ */
+function escapeLikePattern(term: string): string {
+  return term.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
 function memberScope(userId: string): { board: { memberships: { some: { userId: string } } } } {
   return { board: { memberships: { some: { userId } } } };
+}
+
+/** Builds the WHERE clause for every board-list filter except pagination. */
+function filtersWhere(boardId: string, userId: string, filters: TaskListFilters): object {
+  const clauses: object[] = [
+    { boardId },
+    memberScope(userId),
+    { status: { in: filters.statuses } },
+  ];
+  if (filters.priority !== undefined) clauses.push({ priority: filters.priority });
+  if (filters.assigneeId === null) clauses.push({ assigneeId: null });
+  else if (filters.assigneeId !== undefined) clauses.push({ assigneeId: filters.assigneeId });
+  if (filters.due !== undefined) {
+    if (filters.due.kind === "NONE") clauses.push({ dueDate: null });
+    else if (filters.due.kind === "OVERDUE") {
+      clauses.push({ dueDate: { lt: filters.due.today, not: null } });
+    } else if (filters.due.kind === "TODAY") clauses.push({ dueDate: filters.due.today });
+    else if (filters.due.kind === "NEXT_7_DAYS") {
+      clauses.push({ dueDate: { gte: filters.due.from, lte: filters.due.to } });
+    }
+  }
+  if (filters.search !== undefined) {
+    const nameClause = {
+      name: { contains: escapeLikePattern(filters.search.name), mode: "insensitive" as const },
+    };
+    clauses.push(
+      filters.search.sequence === null
+        ? nameClause
+        : { OR: [nameClause, { sequence: filters.search.sequence }] },
+    );
+  }
+  return { AND: clauses };
+}
+
+/** The keyset "after" clause for the requested sort; `{}` for a first page (no cursor). */
+function cursorWhere(sort: TaskSort, cursor: TaskPageRequest["cursor"]): object {
+  if (!cursor) return {};
+  const { key, sequence } = cursor;
+  switch (sort) {
+    case "DUE_DATE": {
+      if (key === null) return { dueDate: null, sequence: { gt: sequence } };
+      const date = dueDateToColumn(key);
+      return {
+        OR: [
+          { dueDate: { gt: date } },
+          { dueDate: date, sequence: { gt: sequence } },
+          { dueDate: null },
+        ],
+      };
+    }
+    case "PRIORITY":
+      return {
+        OR: [
+          { priority: { lt: key as TaskPriority } },
+          { priority: key as TaskPriority, sequence: { gt: sequence } },
+        ],
+      };
+    case "NEWEST":
+      return {
+        OR: [
+          { createdAt: { lt: new Date(key as string) } },
+          { createdAt: new Date(key as string), sequence: { gt: sequence } },
+        ],
+      };
+    case "OLDEST":
+      return {
+        OR: [
+          { createdAt: { gt: new Date(key as string) } },
+          { createdAt: new Date(key as string), sequence: { gt: sequence } },
+        ],
+      };
+    case "NAME":
+      return {
+        OR: [{ name: { gt: key as string } }, { name: key as string, sequence: { gt: sequence } }],
+      };
+  }
+}
+
+function orderByFor(sort: TaskSort): object[] {
+  switch (sort) {
+    case "DUE_DATE":
+      return [{ dueDate: { sort: "asc", nulls: "last" } }, { sequence: "asc" }];
+    case "PRIORITY":
+      return [{ priority: "desc" }, { sequence: "asc" }];
+    case "NEWEST":
+      return [{ createdAt: "desc" }, { sequence: "asc" }];
+    case "OLDEST":
+      return [{ createdAt: "asc" }, { sequence: "asc" }];
+    case "NAME":
+      return [{ name: "asc" }, { sequence: "asc" }];
+  }
 }
 
 function isWriteConflict(error: unknown): boolean {
@@ -155,16 +245,12 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       return row?.role ?? null;
     },
 
-    async listActiveForMember(boardId, userId, page): Promise<TaskPage> {
+    async listForMember(boardId, userId, filters, page): Promise<TaskPage> {
       const rows = await prisma.task.findMany({
         where: {
-          boardId,
-          // The archive slice owns ARCHIVED visibility; it is never part of a board read here.
-          status: { not: "ARCHIVED" },
-          ...memberScope(userId),
-          ...cursorWhere(page),
+          AND: [filtersWhere(boardId, userId, filters), cursorWhere(page.sort, page.cursor)],
         },
-        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        orderBy: orderByFor(page.sort),
         take: page.limit + 1,
         include: withPeople,
       });

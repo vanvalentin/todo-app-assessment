@@ -1,4 +1,10 @@
-import type { BoardRole, ActiveTaskStatus, TaskPriority, TaskStatus } from "@ksat/contracts";
+import type {
+  BoardRole,
+  ActiveTaskStatus,
+  TaskPriority,
+  TaskSort,
+  TaskStatus,
+} from "@ksat/contracts";
 
 export interface TaskPersonPreview {
   readonly id: string;
@@ -24,9 +30,35 @@ export interface TaskRow {
   readonly updatedAt: Date;
 }
 
+/** A due-date bucket, already resolved against the caller-supplied local "today". */
+export type ResolvedDueFilter =
+  | { readonly kind: "OVERDUE"; readonly today: Date }
+  | { readonly kind: "TODAY"; readonly today: Date }
+  | { readonly kind: "NEXT_7_DAYS"; readonly from: Date; readonly to: Date }
+  | { readonly kind: "NONE" };
+
+/** A parsed search term: a name substring, plus an optional exact sequence candidate. */
+export interface TaskSearchFilter {
+  readonly name: string;
+  readonly sequence: number | null;
+}
+
+/**
+ * Fully-resolved board-list filters. `statuses` is always the final set the query
+ * should match (the archive toggle and any status filter are folded in by the
+ * service); `assigneeId: null` means "unassigned", `undefined` means "no filter".
+ */
+export interface TaskListFilters {
+  readonly statuses: readonly TaskStatus[];
+  readonly assigneeId?: string | null;
+  readonly priority?: TaskPriority;
+  readonly due?: ResolvedDueFilter;
+  readonly search?: TaskSearchFilter;
+}
+
 export interface TaskPageRequest {
-  readonly cursorKey?: string | undefined;
-  readonly cursorId?: string | undefined;
+  readonly sort: TaskSort;
+  readonly cursor?: { readonly key: string | null; readonly sequence: number };
   readonly limit: number;
 }
 
@@ -38,11 +70,13 @@ export interface TaskPage {
 /**
  * Fully-resolved task field values the repository writes: the service has already
  * resolved a create request's optional reporterId to a concrete user id (the caller,
- * unless another member was named) before calling the repository.
+ * unless another member was named) before calling the repository. Status is the full
+ * enum because an update/move may archive or restore a task; create requests can
+ * never carry ARCHIVED because `createTaskRequestSchema` restricts it upstream.
  */
 export interface TaskWriteInput {
   readonly name: string;
-  readonly status: ActiveTaskStatus;
+  readonly status: TaskStatus;
   readonly priority: TaskPriority;
   readonly assigneeId: string | null;
   readonly reporterId: string;
@@ -71,11 +105,16 @@ export type DeleteTaskResult = "DELETED" | "NOT_FOUND" | "VERSION_CONFLICT";
  */
 export interface TasksRepository {
   findMembershipRole(boardId: string, userId: string): Promise<BoardRole | null>;
-  listActiveForMember(boardId: string, userId: string, page: TaskPageRequest): Promise<TaskPage>;
+  listForMember(
+    boardId: string,
+    userId: string,
+    filters: TaskListFilters,
+    page: TaskPageRequest,
+  ): Promise<TaskPage>;
   createForMember(
     boardId: string,
     userId: string,
-    input: TaskWriteInput,
+    input: TaskWriteInput & { readonly status: ActiveTaskStatus },
   ): Promise<CreateTaskResult>;
   getForMember(taskId: string, userId: string): Promise<TaskRow | null>;
   updateForMember(

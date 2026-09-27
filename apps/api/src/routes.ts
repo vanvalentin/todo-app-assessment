@@ -6,10 +6,12 @@ import {
   createTaskRequestSchema,
   deleteTaskQuerySchema,
   paginationQuerySchema,
+  taskListQuerySchema,
   updateBoardRequestSchema,
   updateTaskRequestSchema,
   uuidSchema,
 } from "@ksat/contracts";
+import type { TaskPageQuery } from "./modules/tasks/tasks.service.js";
 import type { BoardsService } from "./modules/boards/boards.service.js";
 import type { InvitationsService } from "./modules/invitations/invitations.service.js";
 import type { TasksService } from "./modules/tasks/tasks.service.js";
@@ -92,6 +94,26 @@ function pagination(request: Request): { readonly cursor?: string; readonly limi
   );
   const limit = parsed.limit ?? 50;
   return parsed.cursor === undefined ? { limit } : { cursor: parsed.cursor, limit };
+}
+/** The board-list query: pagination plus the phase 4c search/filter/sort/archive parameters. */
+function taskListQuery(request: Request): TaskPageQuery {
+  const parsed = parseOrThrow(
+    taskListQuerySchema,
+    request.query,
+    "The task list query is invalid.",
+  );
+  return {
+    limit: parsed.limit,
+    sort: parsed.sort,
+    includeArchived: parsed.includeArchived,
+    ...(parsed.cursor !== undefined ? { cursor: parsed.cursor } : {}),
+    ...(parsed.q !== undefined ? { q: parsed.q } : {}),
+    ...(parsed.assignee !== undefined ? { assignee: parsed.assignee } : {}),
+    ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+    ...(parsed.status !== undefined ? { status: parsed.status } : {}),
+    ...(parsed.due !== undefined ? { due: parsed.due } : {}),
+    ...(parsed.today !== undefined ? { today: parsed.today } : {}),
+  };
 }
 export function configureApiRoutes(app: Express, deps: ApiRouteDeps): void {
   const router = express.Router();
@@ -203,7 +225,7 @@ export function configureApiRoutes(app: Express, deps: ApiRouteDeps): void {
         await deps.tasks.listTasks(
           sessionOf(request).user.id,
           boardId(request),
-          pagination(request),
+          taskListQuery(request),
         ),
       );
   });

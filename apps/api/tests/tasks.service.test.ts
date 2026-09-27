@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BoardRole, Task, TaskPriority, TaskStatus } from "@ksat/contracts";
 import { HttpError } from "../src/errors.js";
-import { encodeCursor } from "../src/lib/cursor.js";
+import { encodeTaskCursor } from "../src/lib/taskCursor.js";
 import { createTasksService } from "../src/modules/tasks/tasks.service.js";
 import type {
   CreateTaskResult,
@@ -42,9 +42,7 @@ function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
 function repository(overrides: Partial<TasksRepository> = {}): TasksRepository {
   return {
     findMembershipRole: vi.fn(async (): Promise<BoardRole | null> => "CONTRIBUTOR"),
-    listActiveForMember: vi.fn(
-      async (): Promise<TaskPage> => ({ items: [buildTask()], hasMore: false }),
-    ),
+    listForMember: vi.fn(async (): Promise<TaskPage> => ({ items: [buildTask()], hasMore: false })),
     createForMember: vi.fn(
       async (): Promise<CreateTaskResult> => ({ kind: "CREATED", task: buildTask() }),
     ),
@@ -104,44 +102,95 @@ describe("tasks service", () => {
     expect(task.dueDate).toBeNull();
   });
 
-  it("lists active tasks for a member and emits a cursor only when more remain", async () => {
-    const listActiveForMember = vi.fn(
+  it("lists tasks for a member, excludes ARCHIVED by default, and emits a cursor only when more remain", async () => {
+    const listForMember = vi.fn(
       async (): Promise<TaskPage> => ({ items: [buildTask()], hasMore: true }),
     );
     const service = createTasksService({
-      repository: repository({ listActiveForMember }),
+      repository: repository({ listForMember }),
     });
     const page = await service.listTasks(USER_ID, BOARD_ID, { limit: 50 });
     expect(page.items).toHaveLength(1);
-    expect(page.nextCursor).toBe(encodeCursor({ k: "2027-01-01T00:00:00.000Z", id: TASK_ID }));
-    expect(listActiveForMember).toHaveBeenCalledWith(BOARD_ID, USER_ID, {
-      cursorKey: undefined,
-      cursorId: undefined,
+    expect(page.nextCursor).toBe(
+      encodeTaskCursor({ s: "DUE_DATE", k: null, n: buildTask().sequence }),
+    );
+    expect(listForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      { statuses: ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"] },
+      { sort: "DUE_DATE", limit: 50 },
+    );
+  });
+
+  it("includes ARCHIVED and a status filter when requested", async () => {
+    const listForMember = vi.fn(async (): Promise<TaskPage> => ({ items: [], hasMore: false }));
+    const service = createTasksService({ repository: repository({ listForMember }) });
+    await service.listTasks(USER_ID, BOARD_ID, {
       limit: 50,
+      status: "IN_PROGRESS",
+      includeArchived: true,
+      assignee: "none",
+      priority: "HIGH",
+      q: "  Design  ",
     });
+    expect(listForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      {
+        statuses: ["IN_PROGRESS", "ARCHIVED"],
+        assigneeId: null,
+        priority: "HIGH",
+        search: { name: "  Design  ", sequence: null },
+      },
+      { sort: "DUE_DATE", limit: 50 },
+    );
+  });
+
+  it("resolves a due filter against the caller's supplied today", async () => {
+    const listForMember = vi.fn(async (): Promise<TaskPage> => ({ items: [], hasMore: false }));
+    const service = createTasksService({ repository: repository({ listForMember }) });
+    await service.listTasks(USER_ID, BOARD_ID, { limit: 50, due: "OVERDUE", today: "2027-04-18" });
+    expect(listForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      expect.objectContaining({
+        due: { kind: "OVERDUE", today: new Date("2027-04-18T00:00:00.000Z") },
+      }),
+      { sort: "DUE_DATE", limit: 50 },
+    );
   });
 
   it("forwards a decoded cursor and rejects a malformed one", async () => {
-    const listActiveForMember = vi.fn(
-      async (): Promise<TaskPage> => ({ items: [], hasMore: false }),
-    );
-    const service = createTasksService({ repository: repository({ listActiveForMember }) });
+    const listForMember = vi.fn(async (): Promise<TaskPage> => ({ items: [], hasMore: false }));
+    const service = createTasksService({ repository: repository({ listForMember }) });
     await expect(
       service.listTasks(USER_ID, BOARD_ID, {
-        cursor: encodeCursor({ k: "2027-01-02T00:00:00.000Z", id: TASK_ID }),
+        cursor: encodeTaskCursor({ s: "DUE_DATE", k: "2027-01-02", n: 3 }),
         limit: 10,
       }),
     ).resolves.toEqual({ items: [], nextCursor: null });
-    expect(listActiveForMember).toHaveBeenCalledWith(BOARD_ID, USER_ID, {
-      cursorKey: "2027-01-02T00:00:00.000Z",
-      cursorId: TASK_ID,
-      limit: 10,
-    });
+    expect(listForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      { statuses: ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"] },
+      { sort: "DUE_DATE", limit: 10, cursor: { key: "2027-01-02", sequence: 3 } },
+    );
 
     const failure = await failureOf(
       service.listTasks(USER_ID, BOARD_ID, { cursor: "not-a-cursor", limit: 10 }),
     );
     expect(failure).toMatchObject({ status: 400, code: "INVALID_CURSOR" });
+  });
+
+  it("rejects a cursor produced under a different sort", async () => {
+    const listForMember = vi.fn(async (): Promise<TaskPage> => ({ items: [], hasMore: false }));
+    const service = createTasksService({ repository: repository({ listForMember }) });
+    const cursor = encodeTaskCursor({ s: "NAME", k: "Alpha", n: 1 });
+    const failure = await failureOf(
+      service.listTasks(USER_ID, BOARD_ID, { cursor, limit: 10, sort: "DUE_DATE" }),
+    );
+    expect(failure).toMatchObject({ status: 400, code: "INVALID_CURSOR" });
+    expect(listForMember).not.toHaveBeenCalled();
   });
 
   it("hides a board the caller does not belong to", async () => {

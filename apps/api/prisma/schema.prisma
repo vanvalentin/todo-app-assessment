@@ -153,6 +153,12 @@ enum TaskPriority {
   HIGH
 }
 
+// PostgreSQL-only pg_trgm extension and the GIN trigram index task_name_trgm_idx are
+// maintained in the committed migration because Prisma's schema DSL has no
+// postgresqlExtensions preview enabled here. They back the phase 4c case-insensitive
+// substring search on task name. See
+// apps/api/prisma/migrations/20270601000000_task_search/migration.sql.
+
 // PostgreSQL-only CHECK constraint task_name_not_empty is maintained in the
 // committed migration because Prisma's schema DSL cannot express CHECK constraints.
 // "sequence" is unique per board: Board.nextTaskSequence is incremented in the same

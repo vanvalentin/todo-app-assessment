@@ -492,6 +492,84 @@ describe("phase 4a task routes", () => {
     expect(anonymous.body.code).toBe("UNAUTHENTICATED");
   });
 
+  it("forwards search, filter, sort, and archive query parameters", async () => {
+    let received: unknown;
+    const response = await request(
+      testApp(undefined, {
+        tasks: {
+          listTasks: async (_userId, boardId, query) => {
+            received = { boardId, query };
+            return taskList;
+          },
+        },
+      }),
+    )
+      .get(`/api/v1/boards/${summary.id}/tasks`)
+      .query({
+        q: "design",
+        assignee: "none",
+        priority: "HIGH",
+        status: "IN_PROGRESS",
+        includeArchived: "true",
+        sort: "NAME",
+      })
+      .set("x-user", "user-1");
+    expect(response.status).toBe(200);
+    expect(received).toEqual({
+      boardId: summary.id,
+      query: {
+        limit: 50,
+        sort: "NAME",
+        includeArchived: true,
+        q: "design",
+        assignee: "none",
+        priority: "HIGH",
+        status: "IN_PROGRESS",
+      },
+    });
+  });
+
+  it("requires today for a due filter that depends on the viewer's local day", async () => {
+    const missingToday = await request(testApp())
+      .get(`/api/v1/boards/${summary.id}/tasks`)
+      .query({ due: "OVERDUE" })
+      .set("x-user", "user-1");
+    expect(missingToday.status).toBe(400);
+    expect(missingToday.body.code).toBe("VALIDATION_ERROR");
+
+    const withToday = await request(testApp())
+      .get(`/api/v1/boards/${summary.id}/tasks`)
+      .query({ due: "OVERDUE", today: "2027-04-18" })
+      .set("x-user", "user-1");
+    expect(withToday.status).toBe(200);
+  });
+
+  it("rejects an unknown sort value", async () => {
+    const badSort = await request(testApp())
+      .get(`/api/v1/boards/${summary.id}/tasks`)
+      .query({ sort: "RELEVANCE" })
+      .set("x-user", "user-1");
+    expect(badSort.status).toBe(400);
+    expect(badSort.body.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("maps a task-list cursor/sort mismatch reported by the service to 400", async () => {
+    const response = await request(
+      testApp(undefined, {
+        tasks: {
+          listTasks: async () => {
+            throw new HttpError(400, "INVALID_CURSOR", "The pagination cursor is invalid.");
+          },
+        },
+      }),
+    )
+      .get(`/api/v1/boards/${summary.id}/tasks`)
+      .query({ cursor: "opaque", sort: "DUE_DATE" })
+      .set("x-user", "user-1");
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe("INVALID_CURSOR");
+  });
+
   it("creates a task with contract defaults through a trusted origin", async () => {
     let received: unknown;
     const response = await request(
@@ -678,6 +756,61 @@ describe("phase 4a task routes", () => {
         version: 1,
       });
     expect(malformed.status).toBe(400);
+  });
+
+  it("accepts ARCHIVED on an edit/move (archive and restore), unlike create", async () => {
+    let received: unknown;
+    const archived = await request(
+      testApp(undefined, {
+        tasks: {
+          updateTask: async (_userId, taskId, input) => {
+            received = { taskId, input };
+            return { ...task, status: input.status, version: input.version + 1 };
+          },
+        },
+      }),
+    )
+      .patch(`/api/v1/tasks/${task.id}`)
+      .set("x-user", "user-1")
+      .set("Origin", "http://localhost:8080")
+      .send({
+        name: task.name,
+        status: "ARCHIVED",
+        priority: "LOW",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 1,
+      });
+    expect(archived.status).toBe(200);
+    expect(archived.body.status).toBe("ARCHIVED");
+    expect((received as { input: { status: string } }).input.status).toBe("ARCHIVED");
+
+    const restored = await request(
+      testApp(undefined, {
+        tasks: {
+          updateTask: async (_userId, _taskId, input) => ({
+            ...task,
+            status: input.status,
+            version: input.version + 1,
+          }),
+        },
+      }),
+    )
+      .patch(`/api/v1/tasks/${task.id}`)
+      .set("x-user", "user-1")
+      .set("Origin", "http://localhost:8080")
+      .send({
+        name: task.name,
+        status: "IN_PROGRESS",
+        priority: "LOW",
+        assigneeId: null,
+        reporterId: task.reporter.id,
+        dueDate: null,
+        version: 2,
+      });
+    expect(restored.status).toBe(200);
+    expect(restored.body.status).toBe("IN_PROGRESS");
   });
 
   it("deletes a task only with an explicit version", async () => {

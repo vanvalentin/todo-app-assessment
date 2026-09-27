@@ -209,24 +209,42 @@ run("PostgreSQL tasks", () => {
     expect(rejected).toEqual({ kind: "ASSIGNEE_NOT_MEMBER" });
   });
 
-  it("hides archived tasks and confines reads to board members", async () => {
-    const listed = await repository.listActiveForMember(ids.board, ids.contributor, { limit: 50 });
+  const activeStatuses = ["NOT_STARTED", "IN_PROGRESS", "COMPLETED"] as const;
+  const listActive = (
+    userId: string,
+    page: { limit: number; sort?: import("@ksat/contracts").TaskSort },
+  ) =>
+    repository.listForMember(
+      ids.board,
+      userId,
+      { statuses: [...activeStatuses] },
+      { sort: page.sort ?? "NEWEST", limit: page.limit },
+    );
+
+  it("hides archived tasks by default and includes them only when requested", async () => {
+    const listed = await listActive(ids.contributor, { limit: 50 });
     expect(listed.hasMore).toBe(false);
     expect(listed.items.length).toBeGreaterThan(0);
 
     const archived = listed.items[0];
     if (!archived) throw new Error("expected a task to archive");
     await prisma.task.update({ where: { id: archived.id }, data: { status: "ARCHIVED" } });
-    const afterArchive = await repository.listActiveForMember(ids.board, ids.contributor, {
-      limit: 50,
-    });
+    const afterArchive = await listActive(ids.contributor, { limit: 50 });
     expect(afterArchive.items.map((item) => item.id)).not.toContain(archived.id);
     expect(await repository.getForMember(archived.id, ids.outsider)).toBeNull();
+
+    const withArchived = await repository.listForMember(
+      ids.board,
+      ids.contributor,
+      { statuses: [...activeStatuses, "ARCHIVED"] },
+      { sort: "NEWEST", limit: 50 },
+    );
+    expect(withArchived.items.map((item) => item.id)).toContain(archived.id);
     await prisma.task.update({ where: { id: archived.id }, data: { status: "NOT_STARTED" } });
   });
 
   it("rejects a stale update and lets only one writer win", async () => {
-    const page = await repository.listActiveForMember(ids.board, ids.admin, { limit: 1 });
+    const page = await listActive(ids.admin, { limit: 1 });
     const target = page.items[0];
     if (!target) throw new Error("expected a task");
     const results = await Promise.all([
@@ -344,4 +362,280 @@ run("PostgreSQL tasks", () => {
       repository.findMembershipRole("01900000-0000-7000-8000-000000000999", ids.admin),
     ).resolves.toBeNull();
   });
+
+  describe("phase 4c search, filter, and sort", () => {
+    const filterBoardId = "01900000-0000-7000-8000-000000000401";
+    let taskIds: Record<string, string> = {};
+
+    function daysFromNow(days: number): string {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() + days);
+      return date.toISOString().slice(0, 10);
+    }
+
+    beforeAll(async () => {
+      await prisma.board.deleteMany({ where: { id: filterBoardId } });
+      await prisma.board.create({
+        data: {
+          id: filterBoardId,
+          name: "Filter board",
+          ownerId: ids.admin,
+          memberships: {
+            create: [
+              { id: "01900000-0000-7000-8000-000000000402", userId: ids.admin, role: "ADMIN" },
+              {
+                id: "01900000-0000-7000-8000-000000000403",
+                userId: ids.contributor,
+                role: "CONTRIBUTOR",
+              },
+            ],
+          },
+        },
+      });
+      const specs: Array<{
+        key: string;
+        name: string;
+        priority: "LOW" | "MEDIUM" | "HIGH";
+        assigneeId: string | null;
+        dueDate: string | null;
+      }> = [
+        {
+          key: "overdue",
+          name: "Alpha overdue booth",
+          priority: "HIGH",
+          assigneeId: ids.contributor,
+          dueDate: daysFromNow(-2),
+        },
+        {
+          key: "today",
+          name: "Bravo due today",
+          priority: "MEDIUM",
+          assigneeId: null,
+          dueDate: daysFromNow(0),
+        },
+        {
+          key: "soon",
+          name: "Charlie due soon",
+          priority: "LOW",
+          assigneeId: ids.admin,
+          dueDate: daysFromNow(3),
+        },
+        {
+          key: "far",
+          name: "Delta far out",
+          priority: "MEDIUM",
+          assigneeId: null,
+          dueDate: daysFromNow(30),
+        },
+        {
+          key: "none",
+          name: "Echo 50% off signage",
+          priority: "HIGH",
+          assigneeId: ids.contributor,
+          dueDate: null,
+        },
+      ];
+      taskIds = {};
+      for (const spec of specs) {
+        const created = await repository.createForMember(filterBoardId, ids.admin, {
+          name: spec.name,
+          status: "NOT_STARTED",
+          priority: spec.priority,
+          assigneeId: spec.assigneeId,
+          reporterId: ids.admin,
+          dueDate: spec.dueDate,
+        });
+        if (created.kind !== "CREATED") throw new Error("expected a created task");
+        taskIds[spec.key] = created.task.id;
+      }
+    });
+
+    afterAll(async () => {
+      await prisma.board.deleteMany({ where: { id: filterBoardId } });
+    });
+
+    it("filters by priority", async () => {
+      const page = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], priority: "HIGH" },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(page.items.map((item) => item.id).sort()).toEqual(
+        [taskIds.overdue, taskIds.none].sort(),
+      );
+    });
+
+    it("filters by assignee, including the unassigned sentinel", async () => {
+      const assigned = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], assigneeId: ids.contributor },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(assigned.items.map((item) => item.id).sort()).toEqual(
+        [taskIds.overdue, taskIds.none].sort(),
+      );
+
+      const unassigned = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], assigneeId: null },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(unassigned.items.map((item) => item.id).sort()).toEqual(
+        [taskIds.today, taskIds.far].sort(),
+      );
+
+      // A member of a different board is never a match, but the query still succeeds.
+      const otherBoardMember = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], assigneeId: ids.outsider },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(otherBoardMember.items).toEqual([]);
+    });
+
+    it("resolves due-date buckets against the caller-supplied local today", async () => {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+
+      const overdue = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], due: { kind: "OVERDUE", today } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(overdue.items.map((item) => item.id)).toEqual([taskIds.overdue]);
+
+      const dueToday = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], due: { kind: "TODAY", today } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(dueToday.items.map((item) => item.id)).toEqual([taskIds.today]);
+
+      const next7 = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        {
+          statuses: [...activeStatuses],
+          due: { kind: "NEXT_7_DAYS", from: today, to: new Date(today.getTime() + 6 * 86_400_000) },
+        },
+        { sort: "NAME", limit: 50 },
+      );
+      // NEXT_7_DAYS spans today..today+6 inclusive, so a task due today also matches.
+      expect(next7.items.map((item) => item.id).sort()).toEqual(
+        [taskIds.today, taskIds.soon].sort(),
+      );
+
+      const none = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], due: { kind: "NONE" } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(none.items.map((item) => item.id)).toEqual([taskIds.none]);
+    });
+
+    it("searches by a case-insensitive name substring, treating % and _ literally", async () => {
+      const byName = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], search: { name: "bravo", sequence: null } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(byName.items.map((item) => item.id)).toEqual([taskIds.today]);
+
+      const literalWildcard = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], search: { name: "50%", sequence: null } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(literalWildcard.items.map((item) => item.id)).toEqual([taskIds.none]);
+
+      const noWildcardMatch = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        { statuses: [...activeStatuses], search: { name: "5_", sequence: null } },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(noWildcardMatch.items).toEqual([]);
+    });
+
+    it("searches by an exact task sequence", async () => {
+      const target = await repository.getForMember(taskIds.far as string, ids.admin);
+      if (!target) throw new Error("expected the task");
+      const bySequence = await repository.listForMember(
+        filterBoardId,
+        ids.admin,
+        {
+          statuses: [...activeStatuses],
+          search: { name: "#" + String(target.sequence), sequence: target.sequence },
+        },
+        { sort: "NAME", limit: 50 },
+      );
+      expect(bySequence.items.map((item) => item.id)).toEqual([target.id]);
+    });
+
+    it("paginates DUE_DATE ascending with null due dates last, without gaps or duplicates", async () => {
+      const seen: string[] = [];
+      let cursor: { key: string | null; sequence: number } | undefined;
+      for (let guard = 0; guard < 10; guard += 1) {
+        const page = await repository.listForMember(
+          filterBoardId,
+          ids.admin,
+          { statuses: [...activeStatuses] },
+          { sort: "DUE_DATE", limit: 2, ...(cursor ? { cursor } : {}) },
+        );
+        seen.push(...page.items.map((item) => item.id));
+        if (!page.hasMore) break;
+        const last = page.items.at(-1);
+        if (!last) throw new Error("expected a row");
+        cursor = {
+          key: last.dueDate ? last.dueDate.toISOString().slice(0, 10) : null,
+          sequence: last.sequence,
+        };
+      }
+      expect(seen).toEqual([
+        taskIds.overdue,
+        taskIds.today,
+        taskIds.soon,
+        taskIds.far,
+        taskIds.none,
+      ]);
+      expect(new Set(seen).size).toBe(5);
+    });
+
+    it("paginates NAME ascending without gaps or duplicates", async () => {
+      const seen: string[] = [];
+      let cursor: { key: string | null; sequence: number } | undefined;
+      for (let guard = 0; guard < 10; guard += 1) {
+        const page = await repository.listForMember(
+          filterBoardId,
+          ids.admin,
+          { statuses: [...activeStatuses] },
+          { sort: "NAME", limit: 2, ...(cursor ? { cursor } : {}) },
+        );
+        seen.push(...page.items.map((item) => item.id));
+        if (!page.hasMore) break;
+        const last = page.items.at(-1);
+        if (!last) throw new Error("expected a row");
+        cursor = { key: last.name, sequence: last.sequence };
+      }
+      expect(seen).toEqual([
+        taskIds.overdue,
+        taskIds.today,
+        taskIds.soon,
+        taskIds.far,
+        taskIds.none,
+      ]);
+      expect(new Set(seen).size).toBe(5);
+    });
+  });
 });
+
+describe.skip("placeholder", () => {});

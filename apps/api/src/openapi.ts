@@ -22,6 +22,7 @@ import {
   paginationQuerySchema,
   pendingInvitationListResponseSchema,
   problemDetailsSchema,
+  taskListQuerySchema,
   taskListResponseSchema,
   taskPrioritySchema,
   taskSchema,
@@ -209,13 +210,18 @@ export function buildOpenApiDocument(): OpenApiDocument {
     method: "get",
     path: "/api/v1/boards/{boardId}/tasks",
     security: [{ cookieAuth: [] }],
-    request: { params: boardParamSchema, query: paginationQuerySchema },
+    request: { params: boardParamSchema, query: taskListQuerySchema },
     responses: {
       200: {
-        description: "Active board tasks; ARCHIVED tasks are excluded.",
+        description:
+          "Board tasks matching the search/filter/sort query. ARCHIVED tasks are excluded unless includeArchived=true.",
         ...json(taskListResponseSchema),
       },
-      400: { description: "Malformed board id or pagination query.", ...problem },
+      400: {
+        description:
+          "Malformed board id, an invalid query (including a due filter missing today), or a cursor from a different sort.",
+        ...problem,
+      },
       401: { description: "Unauthenticated.", ...problem },
       404: { description: "Board is unknown or not a member.", ...problem },
     },

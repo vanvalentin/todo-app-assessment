@@ -76,6 +76,21 @@ describe("application OpenAPI", () => {
     ]);
     const boardTasksPath = document.paths?.["/api/v1/boards/{boardId}/tasks"];
     expect(boardTasksPath?.get?.responses?.["200"]).toBeDefined();
+    const taskListParamNames = (boardTasksPath?.get?.parameters ?? [])
+      .map((parameter) => ("name" in parameter ? parameter.name : undefined))
+      .filter((name): name is string => typeof name === "string");
+    expect(taskListParamNames).toEqual(
+      expect.arrayContaining([
+        "q",
+        "assignee",
+        "priority",
+        "status",
+        "includeArchived",
+        "due",
+        "today",
+        "sort",
+      ]),
+    );
     expect(boardTasksPath?.post?.requestBody).toBeDefined();
     expect(Object.keys(boardTasksPath?.post?.responses ?? {}).sort()).toEqual([
       "201",

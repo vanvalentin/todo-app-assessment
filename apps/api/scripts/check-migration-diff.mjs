@@ -58,6 +58,10 @@ const unsupportedRawSql = [
   // (task.boardId), so these exist only in the committed migration (phase 4b).
   /^ALTER TABLE "task" DROP CONSTRAINT "task_assignee_board_membership_fkey";$/,
   /^ALTER TABLE "task" DROP CONSTRAINT "task_reporter_board_membership_fkey";$/,
+  // pg_trgm-backed search index (phase 4c); no postgresqlExtensions preview is
+  // enabled, so both the extension and the index are raw SQL only.
+  /^DROP INDEX "task_name_trgm_idx";$/,
+  /^DROP EXTENSION "pg_trgm";$/,
 ];
 const unexpected = result.stdout
   .split("\n")
