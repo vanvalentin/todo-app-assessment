@@ -56,3 +56,42 @@ export async function createTask(
   await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toBeHidden();
 }
+
+const MAILPIT_BASE_URL = process.env.MAILPIT_BASE_URL ?? "http://localhost:8025";
+
+interface MailpitMessageSummary {
+  ID: string;
+  To: ReadonlyArray<{ Address: string }>;
+}
+
+interface MailpitMessage {
+  Text: string;
+}
+
+/**
+ * Polls Mailpit's HTTP API (exposed by Compose) for the most recent message sent to
+ * `email` and returns the invitation token from its "Accept your invitation" link.
+ * Invitation delivery happens asynchronously after the API commit, so this retries.
+ */
+export async function latestInvitationToken(email: string): Promise<string> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const search = await fetch(
+      `${MAILPIT_BASE_URL}/api/v1/search?query=${encodeURIComponent(`to:"${email}"`)}`,
+    );
+    if (search.ok) {
+      const body = (await search.json()) as { messages: MailpitMessageSummary[] };
+      const match = body.messages.find((message) =>
+        message.To.some((recipient) => recipient.Address.toLowerCase() === email.toLowerCase()),
+      );
+      if (match) {
+        const detail = await fetch(`${MAILPIT_BASE_URL}/api/v1/message/${match.ID}`);
+        const parsed = (await detail.json()) as MailpitMessage;
+        const linkMatch = /\/invitations\/([A-Za-z0-9_-]{20,})/.exec(parsed.Text);
+        if (linkMatch?.[1]) return linkMatch[1];
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`No invitation email arrived for ${email} within the deadline.`);
+}
