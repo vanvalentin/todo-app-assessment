@@ -234,6 +234,12 @@ describe("taskListQuerySchema", () => {
     expect(taskListQuerySchema.safeParse({ assignee: "not-a-uuid" }).success).toBe(false);
   });
 
+  it("parses the blocked and unblocked filters", () => {
+    expect(taskListQuerySchema.parse({ blocking: "BLOCKED" }).blocking).toBe("BLOCKED");
+    expect(taskListQuerySchema.parse({ blocking: "UNBLOCKED" }).blocking).toBe("UNBLOCKED");
+    expect(taskListQuerySchema.safeParse({ blocking: "pending" }).success).toBe(false);
+  });
+
   it("parses includeArchived from the string query value", () => {
     expect(taskListQuerySchema.parse({ includeArchived: "true" }).includeArchived).toBe(true);
     expect(taskListQuerySchema.parse({ includeArchived: "false" }).includeArchived).toBe(false);

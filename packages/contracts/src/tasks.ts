@@ -71,6 +71,10 @@ export type TaskSort = z.infer<typeof taskSortSchema>;
 export const taskDueFilterSchema = z.enum(["OVERDUE", "TODAY", "NEXT_7_DAYS", "NONE"]);
 export type TaskDueFilter = z.infer<typeof taskDueFilterSchema>;
 
+/** Whether a task has an unfinished prerequisite. */
+export const taskBlockingFilterSchema = z.enum(["BLOCKED", "UNBLOCKED"]);
+export type TaskBlockingFilter = z.infer<typeof taskBlockingFilterSchema>;
+
 export const TASK_NAME_MAX_LENGTH = 160;
 /** Markdown source length cap, counted in UTF-16 code units like the database CHECK. */
 export const TASK_DESCRIPTION_MAX_LENGTH = 10_000;
@@ -214,6 +218,7 @@ export const taskListQuerySchema = paginationQuerySchema
     assignee: assigneeFilterSchema.optional(),
     priority: taskPrioritySchema.optional(),
     status: activeTaskStatusSchema.optional(),
+    blocking: taskBlockingFilterSchema.optional(),
     includeArchived: booleanQuerySchema,
     due: taskDueFilterSchema.optional(),
     today: isoDateSchema.optional(),
