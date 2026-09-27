@@ -34,8 +34,8 @@ const DUE_TONE_CLASS = {
 /**
  * A task card. Clicking anywhere on it opens the task modal, which owns every field;
  * dragging it moves it between columns. The first prerequisite appears in the Figma
- * dependency pill; attachments, tags, and recurrence are later-phase fields and stay
- * absent rather than filled with placeholder data.
+ * dependency pill; attachments remain a child resource while recurrence is shown
+ * through a compact text indicator.
  */
 export function TaskCard({
   task,
@@ -65,6 +65,15 @@ export function TaskCard({
       data-overlay={isOverlay ? "true" : undefined}
     >
       <div className={styles.cardTop}>
+        {task.recurrence?.schedule?.enabled === true ? (
+          <span className={styles.recurrenceBadge} aria-label="Recurring task">
+            ↻ Recurring
+          </span>
+        ) : task.recurrence?.occurrence !== null && task.recurrence?.occurrence !== undefined ? (
+          <span className={styles.recurrenceBadge} aria-label="Generated recurring occurrence">
+            ↻ Occurrence
+          </span>
+        ) : null}
         {isCompleted ? (
           <span className={styles.completedBadge}>
             <img src={statusCompleteIcon} alt="" width={7.471} height={5.511} />

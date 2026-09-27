@@ -23,6 +23,24 @@ const withPeople = {
     select: { dependsOn: { select: { id: true, sequence: true, name: true, status: true } } },
     orderBy: { dependsOn: { sequence: "asc" } },
   },
+  schedule: {
+    select: {
+      id: true,
+      rrule: true,
+      timezone: true,
+      startLocal: true,
+      nextRunAt: true,
+      enabled: true,
+    },
+  },
+  generatedOccurrence: {
+    select: {
+      id: true,
+      scheduledAt: true,
+      generatedTaskId: true,
+      schedule: { select: { taskId: true } },
+    },
+  },
 } as const;
 const WRITE_CONFLICT_RETRIES = 5;
 
@@ -53,6 +71,20 @@ interface TaskWithPeople {
     readonly avatarSeed: string;
   } | null;
   readonly reporter: { readonly id: string; readonly name: string; readonly avatarSeed: string };
+  readonly schedule: {
+    readonly id: string;
+    readonly rrule: string;
+    readonly timezone: string;
+    readonly startLocal: string;
+    readonly nextRunAt: Date | null;
+    readonly enabled: boolean;
+  } | null;
+  readonly generatedOccurrence: {
+    readonly id: string;
+    readonly scheduledAt: Date;
+    readonly generatedTaskId: string | null;
+    readonly schedule: { readonly taskId: string | null };
+  } | null;
 }
 
 function toTaskRow(row: TaskWithPeople): TaskRow {
@@ -72,6 +104,26 @@ function toTaskRow(row: TaskWithPeople): TaskRow {
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    recurrence: {
+      schedule: row.schedule
+        ? {
+            id: row.schedule.id,
+            rrule: row.schedule.rrule,
+            timezone: row.schedule.timezone,
+            startLocal: row.schedule.startLocal,
+            nextRunAt: row.schedule.nextRunAt?.toISOString() ?? null,
+            enabled: row.schedule.enabled,
+          }
+        : null,
+      occurrence: row.generatedOccurrence
+        ? {
+            id: row.generatedOccurrence.id,
+            scheduledAt: row.generatedOccurrence.scheduledAt.toISOString(),
+            templateTaskId: row.generatedOccurrence.schedule.taskId,
+            generatedTaskId: row.generatedOccurrence.generatedTaskId,
+          }
+        : null,
+    },
   };
 }
 
@@ -288,7 +340,9 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
    * holding the board row lock until commit makes the second one see the first edge.
    */
   async function lockBoardGraph(tx: Prisma.TransactionClient, boardId: string): Promise<void> {
-    await tx.board.findUnique({ where: { id: boardId }, select: { id: true } });
+    await tx.$queryRaw<
+      { id: string }[]
+    >`SELECT "id" FROM "board" WHERE "id" = ${boardId} FOR UPDATE`;
   }
 
   /** True when any new prerequisite already (transitively) depends on the task itself. */
@@ -395,6 +449,19 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 })),
               });
             }
+            if (input.schedule) {
+              await tx.taskSchedule.create({
+                data: {
+                  id: input.schedule.id ?? generateUuid(),
+                  taskId,
+                  rrule: input.schedule.rrule,
+                  timezone: input.schedule.timezone,
+                  startLocal: input.schedule.startLocal,
+                  nextRunAt: input.schedule.nextRunAt,
+                  enabled: input.schedule.enabled,
+                },
+              });
+            }
             const task = await tx.task.findUniqueOrThrow({
               where: { id: taskId },
               include: withPeople,
@@ -495,6 +562,40 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             throw error;
           }
           if (updated.count === 1) {
+            if (input.schedule !== undefined) {
+              if (input.schedule === null) {
+                await tx.taskSchedule.updateMany({
+                  where: { taskId },
+                  data: { taskId: null, enabled: false, nextRunAt: null },
+                });
+              } else {
+                await tx.taskSchedule.upsert({
+                  where: { taskId },
+                  create: {
+                    id: input.schedule.id ?? generateUuid(),
+                    taskId,
+                    rrule: input.schedule.rrule,
+                    timezone: input.schedule.timezone,
+                    startLocal: input.schedule.startLocal,
+                    nextRunAt: input.schedule.nextRunAt,
+                    enabled: input.schedule.enabled,
+                  },
+                  update: {
+                    rrule: input.schedule.rrule,
+                    timezone: input.schedule.timezone,
+                    startLocal: input.schedule.startLocal,
+                    nextRunAt: input.schedule.nextRunAt,
+                    enabled: input.schedule.enabled,
+                  },
+                });
+              }
+            }
+            if (input.status === "ARCHIVED") {
+              await tx.taskSchedule.updateMany({
+                where: { taskId },
+                data: { enabled: false, nextRunAt: null },
+              });
+            }
             const row = await tx.task.findFirst({
               where: { id: taskId, ...memberScope(userId) },
               include: withPeople,
@@ -538,6 +639,10 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
               update: { completedAt: null, lastErrorCode: null },
             });
           }
+          await tx.taskSchedule.updateMany({
+            where: { taskId },
+            data: { enabled: false, nextRunAt: null, taskId: null },
+          });
           await tx.task.delete({ where: { id: taskId } });
           return "DELETED" as const;
         });

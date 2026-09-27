@@ -186,6 +186,17 @@ export const demoTasks = [
   },
 ] as const;
 
+/** Deterministic schedule attached to the first demo task for worker/UI smoke coverage. */
+export const demoTaskSchedule = {
+  id: "01900000-0000-7000-8000-000000000791",
+  taskId: "01900000-0000-7000-8000-000000000701",
+  rrule: "RRULE:FREQ=WEEKLY;INTERVAL=1;BYDAY=MO",
+  timezone: "America/New_York",
+  startLocal: "2027-04-19T09:00:00",
+  nextRunAt: "2027-04-26T13:00:00.000Z",
+  enabled: true,
+} as const;
+
 /** Deterministic same-board prerequisite edges: [task id, depends-on task id]. */
 export const demoTaskDependencies = [
   ["01900000-0000-7000-8000-000000000702", "01900000-0000-7000-8000-000000000701"],
@@ -274,6 +285,26 @@ export async function seed(): Promise<void> {
       });
     }
     const boardOfTask = new Map<string, string>(demoTasks.map((task) => [task.id, task.boardId]));
+    await prisma.taskSchedule.upsert({
+      where: { id: demoTaskSchedule.id },
+      update: {
+        taskId: demoTaskSchedule.taskId,
+        rrule: demoTaskSchedule.rrule,
+        timezone: demoTaskSchedule.timezone,
+        startLocal: demoTaskSchedule.startLocal,
+        nextRunAt: new Date(demoTaskSchedule.nextRunAt),
+        enabled: demoTaskSchedule.enabled,
+      },
+      create: {
+        id: demoTaskSchedule.id,
+        taskId: demoTaskSchedule.taskId,
+        rrule: demoTaskSchedule.rrule,
+        timezone: demoTaskSchedule.timezone,
+        startLocal: demoTaskSchedule.startLocal,
+        nextRunAt: new Date(demoTaskSchedule.nextRunAt),
+        enabled: demoTaskSchedule.enabled,
+      },
+    });
     for (const [taskId, dependsOnTaskId] of demoTaskDependencies) {
       const boardId = boardOfTask.get(taskId);
       if (!boardId) throw new Error(`Missing demo dependency task: ${taskId}`);

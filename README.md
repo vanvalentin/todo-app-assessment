@@ -2,7 +2,7 @@
 
 A collaborative TODO board application designed from the supplied [Figma file](https://www.figma.com/design/JxPLX0m5zrEJORwABJUyAp/Assesment---Sleekflow?node-id=0-1&p=f&t=IpEmKzygdgN2jYxJ-0).
 
-> **Project status:** delivery phase 5b (private task attachments) is in progress. Task attachments use authenticated API-mediated MinIO storage, PostgreSQL metadata, server-side type/size validation, and durable cleanup work. Recurrence remains in a later phase.
+> **Project status:** delivery phase 6 (recurring work) is complete; release hardening remains. Recurring schedules use validated RFC 5545 rules, explicit IANA timezones, PostgreSQL idempotency, and a BullMQ worker.
 
 ## Product scope
 
@@ -304,7 +304,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 
 ### Browser journeys and CI
 
-`e2e/` holds the Playwright journeys and `playwright.config.ts` targets `E2E_BASE_URL` (default `http://localhost:5173`). The seed-independent journey signs up a brand-new account, creates a board and task with self-assignment and a due date, edits it through the full modal, moves it through the Kanban columns, reloads to prove persistence, and deletes it; it also measures page and column overflow at 1280px and 375px.
+`e2e/` holds the Playwright journeys and `playwright.config.ts` targets `E2E_BASE_URL` (default `http://localhost:5173`). The seed-independent journey signs up a brand-new account, creates a board and task with self-assignment and a due date, edits it through the full modal, moves it through the Kanban columns, reloads to prove persistence, and deletes it; it also measures page and column overflow at 1280px and 375px. The seeded recurring-work journey logs in as `ada@example.test`, pauses/resumes the deterministic recurring template, and verifies the recurring card remains intact.
 
 `.github/workflows/ci.yml` runs three jobs with Node `24.12.0`, Corepack-pinned pnpm `11.18.0`, and dependency caching keyed from `pnpm-lock.yaml`:
 
@@ -314,7 +314,7 @@ A task carries a human-friendly `sequence` that is unique per board. Creation lo
 
 ### Seed
 
-`pnpm db:seed` (and the Compose `migrate` job when `SEED_DEMO_DATA=true`) creates a deterministic task set across the demo boards, including one `ARCHIVED` row that demonstrates its exclusion from board reads. Each board's `nextTaskSequence` is set just past the seeded sequences so tasks created later never collide with them.
+`pnpm db:seed` (and the Compose `migrate` job when `SEED_DEMO_DATA=true`) creates a deterministic task set across the demo boards, including one recurring template and one `ARCHIVED` row that demonstrates its exclusion from board reads. Each board's `nextTaskSequence` is set just past the seeded sequences so tasks created later never collide with them.
 
 ## People and dates delivery (phase 4b)
 
@@ -345,7 +345,6 @@ Phase 4b extends the Kanban slice with an optional assignee, required reporter, 
 ### Verification scope
 
 Contract tests reject impossible dates; service/HTTP tests cover defaults and 422 errors; PostgreSQL integration tests cover cross-board rejection, persisted people/date values, optimistic concurrency, and assignee clearing on membership removal. Testing Library/MSW covers create-more, people/date submission, conflict reload, membership errors, discard, deletion, and controlled-clock overdue rendering. Playwright extends the unseeded signup journey through create with assignee/date, edit/persist, and modal deletion.
-
 
 ## Content and dependencies delivery (phase 5a)
 
@@ -540,7 +539,7 @@ Compose health checks and `depends_on: condition: service_healthy` will gate sta
 - **Unit:** domain rules, recurrence calculations, authorization decisions, validators, cache-key/invalidation logic, and React components.
 - **API integration:** Express app factory + Supertest against isolated PostgreSQL/Redis/MinIO test dependencies; test Better Auth credential/session flows and both allowed and forbidden application paths. Social-provider tests use mocked provider responses.
 - **Contract:** generated application OpenAPI snapshot, Better Auth route-reference availability, and representative request/response schemas.
-- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion; phase 5a adds a Markdown description (raw HTML not rendered), a searched dependency shown on the card, a rejected reverse cycle, and the full-screen sheet at 375px. Later slices add attachments.
+- **Browser:** Playwright journeys. Phase 4a covers signup → create board → create task → move it plus overflow checks; phase 4b adds assignee/date creation, edit persistence, and modal deletion; phase 5a adds a Markdown description (raw HTML not rendered), a searched dependency shown on the card, a rejected reverse cycle, and the full-screen sheet at 375px; phase 6 adds seeded recurrence pause/resume coverage.
 - **Visual:** compare implemented screens at the Figma desktop dimensions and selected responsive widths. Screenshot tests support review but do not replace semantic assertions.
 
 Tests must control time and timezone for due-date/recurrence behavior. Each bug fix adds a regression test at the lowest useful level.
@@ -590,7 +589,7 @@ Coverage is used to find gaps, not as a substitute for behavior-based tests. Ini
 5. **Task detail**
    - **5a — Content and dependencies (complete):** Markdown editor/rendering and same-board dependencies with transactional cycle checks.
    - **5b — Attachments:** MinIO uploads with server-side size, content-type, authorization, and ownership validation.
-6. **Recurring work** — RRULE editor, queue/worker generation, idempotency and timezone tests.
+6. **Recurring work (complete)** — guided and advanced RRULE editing, timezone-aware queue/worker generation, idempotency, bounded catch-up, recurrence tests, a real BullMQ/PostgreSQL smoke path, and a seeded Playwright journey.
 7. **Release hardening** — full accessibility audit, Figma comparison of every screen, OpenAPI review, operational documentation, and a complete end-to-end suite.
 
 After the MVP: role changes, member removal, invitation resend, roster export, favourites, tags, and audit logs.

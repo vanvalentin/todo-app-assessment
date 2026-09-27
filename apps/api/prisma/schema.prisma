@@ -204,6 +204,8 @@ model Task {
   dependencies TaskDependency[] @relation("TaskDependencies")
   dependents   TaskDependency[] @relation("TaskDependents")
   attachments  Attachment[]      @relation("TaskAttachments")
+  schedule     TaskSchedule?       @relation("TaskScheduleTemplate")
+  generatedOccurrence ScheduleOccurrence? @relation("GeneratedOccurrence")
 
   @@unique([boardId, sequence])
   // Target of task_dependency's composite foreign keys, which keep both ends of every
@@ -234,6 +236,37 @@ model TaskDependency {
   @@id([taskId, dependsOnTaskId])
   @@index([boardId, dependsOnTaskId])
   @@map("task_dependency")
+}
+
+model TaskSchedule {
+  id         String   @id
+  taskId     String?  @unique
+  task       Task?    @relation("TaskScheduleTemplate", fields: [taskId], references: [id], onDelete: SetNull)
+  rrule      String
+  timezone   String
+  startLocal String
+  nextRunAt  DateTime?
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  occurrences ScheduleOccurrence[]
+
+  @@index([enabled, nextRunAt])
+  @@map("task_schedule")
+}
+
+model ScheduleOccurrence {
+  id              String       @id
+  scheduleId      String
+  schedule        TaskSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  scheduledAt     DateTime
+  generatedTaskId String?      @unique
+  generatedTask   Task?        @relation("GeneratedOccurrence", fields: [generatedTaskId], references: [id], onDelete: SetNull)
+  createdAt       DateTime     @default(now())
+
+  @@unique([scheduleId, scheduledAt])
+  @@index([scheduleId, scheduledAt])
+  @@map("schedule_occurrence")
 }
 
 model Attachment {

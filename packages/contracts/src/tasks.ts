@@ -13,6 +13,56 @@ export type ActiveTaskStatus = z.infer<typeof activeTaskStatusSchema>;
 export const taskPrioritySchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type TaskPriority = z.infer<typeof taskPrioritySchema>;
 
+/** RFC 5545 wall-clock anchor without an offset; interpreted in the selected IANA zone. */
+export const localDateTimeSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, "must be a local date-time without an offset")
+  .refine(
+    (value) => !Number.isNaN(Date.parse(value.replace("T", " ") + "Z")),
+    "must be a valid date-time",
+  );
+export type LocalDateTime = z.infer<typeof localDateTimeSchema>;
+
+export const taskScheduleInputSchema = z
+  .object({
+    rrule: z.string().trim().min(1).max(500),
+    timezone: z.string().trim().min(1).max(64),
+    startLocal: localDateTimeSchema,
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+export type TaskScheduleInput = z.infer<typeof taskScheduleInputSchema>;
+
+export const taskScheduleSchema = z
+  .object({
+    id: uuidSchema,
+    rrule: z.string().min(1).max(500),
+    timezone: z.string().min(1).max(64),
+    startLocal: localDateTimeSchema,
+    enabled: z.boolean(),
+    nextRunAt: isoTimestampSchema.nullable(),
+  })
+  .strict();
+export type TaskSchedule = z.infer<typeof taskScheduleSchema>;
+
+export const taskOccurrenceSchema = z
+  .object({
+    id: uuidSchema,
+    scheduledAt: isoTimestampSchema,
+    templateTaskId: uuidSchema.nullable(),
+    generatedTaskId: uuidSchema.nullable(),
+  })
+  .strict();
+export type TaskOccurrence = z.infer<typeof taskOccurrenceSchema>;
+
+export const taskRecurrenceSchema = z
+  .object({
+    schedule: taskScheduleSchema.nullable(),
+    occurrence: taskOccurrenceSchema.nullable(),
+  })
+  .strict();
+export type TaskRecurrence = z.infer<typeof taskRecurrenceSchema>;
+
 /** Board-list sort keys; DUE_DATE is the default (soonest first, no date last). */
 export const taskSortSchema = z.enum(["DUE_DATE", "PRIORITY", "NEWEST", "OLDEST", "NAME"]);
 export type TaskSort = z.infer<typeof taskSortSchema>;
@@ -58,10 +108,9 @@ export const taskReferenceSchema = z
 export type TaskReference = z.infer<typeof taskReferenceSchema>;
 
 /**
- * A task as returned by the API. Attachments and schedules are later-phase fields
- * and are deliberately absent rather than returned as placeholder data. Assignee,
- * reporter, and due date arrive in phase 4b; the Markdown description and
- * same-board dependencies in phase 5a.
+ * A task as returned by the API. Attachment metadata remains a separate child
+ * resource; recurrence metadata is embedded when the task is a template or occurrence.
+ * Assignee, reporter, and due date arrive in phase 4b; Markdown and dependencies in phase 5a.
  */
 export const taskSchema = z
   .object({
@@ -85,6 +134,8 @@ export const taskSchema = z
     version: versionSchema,
     createdAt: isoTimestampSchema,
     updatedAt: isoTimestampSchema,
+    /** Recurrence metadata is omitted by legacy clients and present on API responses. */
+    recurrence: taskRecurrenceSchema.optional(),
   })
   .strict();
 export type Task = z.infer<typeof taskSchema>;
@@ -105,6 +156,8 @@ export const createTaskRequestSchema = z
     dueDate: isoDateSchema.nullable().default(null),
     /** Ids of other tasks on the same board that this task depends on. */
     dependsOnIds: dependsOnIdsSchema.default([]),
+    /** Optional for backwards-compatible clients; omitted means no schedule. */
+    schedule: taskScheduleInputSchema.nullable().optional(),
   })
   .strict();
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
@@ -126,6 +179,8 @@ export const updateTaskRequestSchema = z
     dueDate: isoDateSchema.nullable(),
     /** Replaces the full prerequisite set; an empty array clears it. */
     dependsOnIds: dependsOnIdsSchema,
+    /** Omitted preserves the existing schedule; null removes it. */
+    schedule: taskScheduleInputSchema.nullable().optional(),
     version: versionSchema,
   })
   .strict();

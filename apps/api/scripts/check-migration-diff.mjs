@@ -65,6 +65,13 @@ const unsupportedRawSql = [
   // Description length and no-self-dependency CHECK constraints (phase 5a).
   /^ALTER TABLE "task" DROP CONSTRAINT "task_description_length";$/,
   /^ALTER TABLE "task_dependency" DROP CONSTRAINT "task_dependency_not_self";$/,
+  // Prisma derives relation constraint names from field names; the committed SQL
+  // uses concise names, so these are harmless schema-diff renames.
+  /^ALTER TABLE "attachment" RENAME CONSTRAINT "attachment_task_fkey" TO "attachment_taskId_fkey";$/,
+  /^ALTER TABLE "attachment" RENAME CONSTRAINT "attachment_uploader_fkey" TO "attachment_uploaderId_fkey";$/,
+  /^ALTER TABLE "schedule_occurrence" RENAME CONSTRAINT "schedule_occurrence_schedule_fkey" TO "schedule_occurrence_scheduleId_fkey";$/,
+  /^ALTER TABLE "schedule_occurrence" RENAME CONSTRAINT "schedule_occurrence_task_fkey" TO "schedule_occurrence_generatedTaskId_fkey";$/,
+  /^ALTER TABLE "task_schedule" RENAME CONSTRAINT "task_schedule_task_fkey" TO "task_schedule_taskId_fkey";$/,
 ];
 const unexpected = result.stdout
   .split("\n")

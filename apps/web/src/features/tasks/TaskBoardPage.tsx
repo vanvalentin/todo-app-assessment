@@ -171,6 +171,15 @@ export function TaskBoardPage() {
         dueDate: task.dueDate,
         description: task.description,
         dependsOn: task.dependsOn,
+        schedule:
+          task.recurrence?.schedule === null || task.recurrence?.schedule === undefined
+            ? null
+            : {
+                rrule: task.recurrence.schedule.rrule,
+                timezone: task.recurrence.schedule.timezone,
+                startLocal: task.recurrence.schedule.startLocal,
+                enabled: task.recurrence.schedule.enabled,
+              },
       });
       if (status === "ARCHIVED") {
         notify("success", `Archived \u201c${task.name}\u201d.`);

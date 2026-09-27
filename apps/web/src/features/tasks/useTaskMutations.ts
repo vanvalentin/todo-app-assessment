@@ -12,6 +12,7 @@ import type {
   TaskPriority,
   TaskReference,
   TaskStatus,
+  TaskScheduleInput,
   UserPreview,
 } from "@ksat/contracts";
 import type { TaskListFilterParams } from "../../lib/api/tasks";
@@ -35,6 +36,7 @@ export interface TaskEditValues {
   readonly description: string | null;
   /** Full prerequisite previews, so the optimistic cache can render them immediately. */
   readonly dependsOn: readonly TaskReference[];
+  readonly schedule: TaskScheduleInput | null;
 }
 
 interface Snapshot {
@@ -143,6 +145,7 @@ export function useTaskMutations(boardId: string) {
       dueDate,
       description,
       dependsOn,
+      schedule,
     }: TaskEditValues) =>
       updateTask(task.id, {
         name,
@@ -153,6 +156,10 @@ export function useTaskMutations(boardId: string) {
         dueDate,
         description,
         dependsOnIds: dependsOn.map((reference) => reference.id),
+        ...(schedule !== null ||
+        (task.recurrence?.schedule !== null && task.recurrence?.schedule !== undefined)
+          ? { schedule }
+          : {}),
         version: task.version,
       }),
     onMutate: async (values: TaskEditValues): Promise<Snapshot> => {
@@ -167,6 +174,7 @@ export function useTaskMutations(boardId: string) {
         dueDate: values.dueDate,
         description: values.description,
         dependsOn: [...values.dependsOn],
+        ...(values.task.recurrence !== undefined ? { recurrence: values.task.recurrence } : {}),
       };
       return forEachTasksQuery(queryClient, boardId, (data, filters) =>
         reconcileTask(data, filters, updated),

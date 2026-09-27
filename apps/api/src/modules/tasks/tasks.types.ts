@@ -4,6 +4,7 @@ import type {
   TaskPriority,
   TaskSort,
   TaskStatus,
+  TaskRecurrence,
 } from "@ksat/contracts";
 
 export interface TaskPersonPreview {
@@ -39,6 +40,7 @@ export interface TaskRow {
   readonly version: number;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  readonly recurrence?: TaskRecurrence;
 }
 
 /** A due-date bucket, already resolved against the caller-supplied local "today". */
@@ -85,6 +87,15 @@ export interface TaskPage {
  * enum because an update/move may archive or restore a task; create requests can
  * never carry ARCHIVED because `createTaskRequestSchema` restricts it upstream.
  */
+export interface TaskScheduleWrite {
+  readonly id?: string;
+  readonly rrule: string;
+  readonly timezone: string;
+  readonly startLocal: string;
+  readonly enabled: boolean;
+  readonly nextRunAt: Date | null;
+}
+
 export interface TaskWriteInput {
   readonly name: string;
   readonly description: string | null;
@@ -95,6 +106,8 @@ export interface TaskWriteInput {
   readonly dueDate: string | null;
   /** The complete prerequisite set; never contains the task's own id (the service rejects that). */
   readonly dependsOnIds: readonly string[];
+  /** Undefined preserves an existing schedule during PATCH; null removes it. */
+  readonly schedule?: TaskScheduleWrite | null | undefined;
 }
 
 /** Validation failures shared by create and update. */

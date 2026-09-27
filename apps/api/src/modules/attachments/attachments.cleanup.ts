@@ -2,7 +2,7 @@ import { DeleteObjectCommand, type S3Client } from "@aws-sdk/client-s3";
 import { Queue, Worker } from "bullmq";
 import type { PrismaClient } from "@prisma/client";
 
-const QUEUE_NAME = "ksat:attachment-cleanup";
+const QUEUE_NAME = "ksat-attachment-cleanup";
 export interface AttachmentCleanupRuntime {
   readonly close: () => Promise<void>;
 }

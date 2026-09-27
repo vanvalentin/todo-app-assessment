@@ -9,6 +9,7 @@ import {
   type TaskPriority,
   type TaskReference,
   type TaskStatus,
+  type TaskScheduleInput,
   type UserPreview,
 } from "@ksat/contracts";
 import {
@@ -31,6 +32,7 @@ import { AssigneePill, DueDatePill, PriorityPill, ReporterPill, StatusPill } fro
 import { DependencyPicker } from "./DependencyPicker";
 import { DescriptionField } from "./DescriptionField";
 import { AttachmentField } from "./AttachmentField";
+import { RecurrenceField } from "./RecurrenceField";
 import { dependencyErrorMessage, taskMutationErrorMessage } from "./taskBoard";
 import { useBoardMembers, withKnownPerson } from "./useBoardMembers";
 import styles from "./TaskModal.module.scss";
@@ -59,6 +61,18 @@ export interface TaskModalProps {
   readonly onRequestDelete?: (() => void) | undefined;
 }
 
+function scheduleInputFromTask(task: Task | undefined): TaskScheduleInput | null {
+  const schedule = task?.recurrence?.schedule;
+  return schedule === null || schedule === undefined
+    ? null
+    : {
+        rrule: schedule.rrule,
+        timezone: schedule.timezone,
+        startLocal: schedule.startLocal,
+        enabled: schedule.enabled,
+      };
+}
+
 function formatUpdatedAt(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: "short",
@@ -70,8 +84,8 @@ function formatUpdatedAt(iso: string): string {
 
 /**
  * The designed create/edit modal (Figma `1:1045`, `1:479`). Phase 5a adds the
- * Markdown description and same-board dependencies; tags and attachments are still
- * later-phase content and are omitted rather than rendered disabled.
+ * Markdown description, dependencies, attachments, and recurring-work controls;
+ * deferred tags remain omitted rather than rendered as fake behavior.
  */
 export function TaskModal({
   boardId,
@@ -85,6 +99,7 @@ export function TaskModal({
   onRequestDelete,
 }: TaskModalProps) {
   const isEditing = task !== undefined;
+  const occurrence = task?.recurrence?.occurrence;
   const titleId = useId();
   const nameId = useId();
   const helpId = useId();
@@ -106,6 +121,9 @@ export function TaskModal({
   const [description, setDescription] = useState<string>(task?.description ?? "");
   const [attachmentFiles, setAttachmentFiles] = useState<readonly File[]>([]);
   const [dependsOn, setDependsOn] = useState<readonly TaskReference[]>(task?.dependsOn ?? []);
+  const [schedule, setSchedule] = useState<TaskScheduleInput | null>(() =>
+    scheduleInputFromTask(task),
+  );
   const [dependencyError, setDependencyError] = useState<string | null>(null);
   // Remounts the description editor on reload so it re-derives its initial tab.
   const [descriptionKey, setDescriptionKey] = useState(0);
@@ -137,6 +155,7 @@ export function TaskModal({
     setDueDate(latest.dueDate);
     setDescription(latest.description ?? "");
     setDependsOn(latest.dependsOn);
+    setSchedule(scheduleInputFromTask(latest));
     setDescriptionKey((key) => key + 1);
     setDependencyError(null);
     setAssigneeError(null);
@@ -181,6 +200,7 @@ export function TaskModal({
           dueDate,
           description: descriptionValue,
           dependsOn,
+          schedule,
         });
         onClose();
       } else {
@@ -195,6 +215,7 @@ export function TaskModal({
           dueDate,
           description: descriptionValue,
           dependsOnIds: dependsOn.map((reference) => reference.id),
+          ...(schedule !== null ? { schedule } : {}),
         });
         if (
           attachmentFiles.length > 0 &&
@@ -210,6 +231,7 @@ export function TaskModal({
           form.reset({ name: "" });
           setDescription("");
           setAttachmentFiles([]);
+          setSchedule(null);
           setDescriptionKey((key) => key + 1);
           setIsDirty(false);
           nameInputRef.current?.focus();
@@ -335,6 +357,11 @@ export function TaskModal({
                 </span>
               )}
             </div>
+            {occurrence === null || occurrence === undefined ? null : (
+              <p className={styles.occurrenceContext}>
+                Generated occurrence · scheduled {new Date(occurrence.scheduledAt).toLocaleString()}
+              </p>
+            )}
 
             <div className={styles.pillRow}>
               <StatusPill
@@ -405,6 +432,15 @@ export function TaskModal({
               }}
               disabled={isBusy}
               initialMode={description.trim() === "" ? "write" : "preview"}
+            />
+
+            <RecurrenceField
+              value={schedule}
+              onChange={(next) => {
+                setSchedule(next);
+                markDirty();
+              }}
+              disabled={isBusy}
             />
 
             <AttachmentField

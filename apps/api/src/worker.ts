@@ -4,6 +4,7 @@ import { createInfrastructure } from "./infrastructure/dependencies.js";
 import { loadEnvironment } from "./config/env.js";
 import { createLogger } from "./logging.js";
 import { startAttachmentCleanupWorker } from "./modules/attachments/attachments.cleanup.js";
+import { startRecurrenceWorker } from "./modules/tasks/recurrence.worker.js";
 
 export async function startWorker(): Promise<void> {
   const environment = loadEnvironment();
@@ -15,7 +16,11 @@ export async function startWorker(): Promise<void> {
     bucket: environment.S3_BUCKET,
     redisUrl: environment.REDIS_URL,
   });
-  logger.info("Attachment cleanup worker started");
+  const recurrence = await startRecurrenceWorker({
+    prisma: infrastructure.prisma,
+    redisUrl: environment.REDIS_URL,
+  });
+  logger.info("Attachment cleanup and recurrence workers started");
 
   await new Promise<void>((resolveWorker) => {
     let stopped = false;
@@ -24,8 +29,7 @@ export async function startWorker(): Promise<void> {
       if (stopped) return;
       stopped = true;
       clearInterval(keepAlive);
-      void cleanup
-        .close()
+      void Promise.all([cleanup.close(), recurrence.close()])
         .finally(() => infrastructure.close())
         .finally(() => {
           logger.info({ reason }, "Idle worker stopped");

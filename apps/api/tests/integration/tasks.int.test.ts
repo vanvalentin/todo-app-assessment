@@ -2,6 +2,10 @@ import { PrismaClient } from "@prisma/client";
 import type { TaskStatus } from "@ksat/contracts";
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { createPrismaTasksRepository } from "../../src/modules/tasks/tasks.repository.js";
+import {
+  generateOccurrence,
+  startRecurrenceWorker,
+} from "../../src/modules/tasks/recurrence.worker.js";
 import type { TaskRow } from "../../src/modules/tasks/tasks.types.js";
 
 const configuredDatabaseUrl = process.env.INTEGRATION_DATABASE_URL;
@@ -1003,6 +1007,140 @@ run("PostgreSQL tasks", () => {
       await expect(
         prisma.task.update({ where: { id: task.id }, data: { description: "" } }),
       ).rejects.toThrow(/task_description_length/);
+    });
+
+    it("generates one idempotent occurrence with copied stable fields", async () => {
+      const template = await create("Worker template");
+      const scheduledAt = new Date("2027-04-20T13:00:00.000Z");
+      const updated = await repository.updateForMember(template.id, ids.contributor, {
+        name: template.name,
+        description: "Stable **description**",
+        status: template.status,
+        priority: "HIGH",
+        assigneeId: ids.admin,
+        reporterId: ids.contributor,
+        dueDate: null,
+        dependsOnIds: [],
+        schedule: {
+          rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
+          timezone: "America/New_York",
+          startLocal: "2027-04-19T09:00:00",
+          enabled: true,
+          nextRunAt: scheduledAt,
+        },
+        version: template.version,
+      });
+      expect(updated.kind).toBe("UPDATED");
+      const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: template.id } });
+      if (schedule === null) throw new Error("expected a persisted schedule");
+      await generateOccurrence(prisma, {
+        scheduleId: schedule.id,
+        scheduledAt: scheduledAt.toISOString(),
+      });
+      await generateOccurrence(prisma, {
+        scheduleId: schedule.id,
+        scheduledAt: scheduledAt.toISOString(),
+      });
+      const occurrence = await prisma.scheduleOccurrence.findUnique({
+        where: { scheduleId_scheduledAt: { scheduleId: schedule.id, scheduledAt } },
+        include: { generatedTask: true },
+      });
+      expect(occurrence?.generatedTask).toMatchObject({
+        name: template.name,
+        description: "Stable **description**",
+        status: "NOT_STARTED",
+        priority: "HIGH",
+        assigneeId: ids.admin,
+        reporterId: ids.contributor,
+        dueDate: new Date("2027-04-20T00:00:00.000Z"),
+      });
+      expect(await prisma.scheduleOccurrence.count({ where: { scheduleId: schedule.id } })).toBe(1);
+    });
+
+    it.skipIf(process.env.INTEGRATION_REDIS_URL === undefined)(
+      "processes a due schedule through the real BullMQ worker",
+      async () => {
+        const redisUrl = process.env.INTEGRATION_REDIS_URL;
+        if (redisUrl === undefined) throw new Error("INTEGRATION_REDIS_URL is required");
+        const template = await create("Worker process smoke");
+        const nextRunAt = new Date(Date.now() - 1_000);
+        const updated = await repository.updateForMember(template.id, ids.contributor, {
+          name: template.name,
+          description: template.description,
+          status: template.status,
+          priority: template.priority,
+          assigneeId: null,
+          reporterId: ids.contributor,
+          dueDate: null,
+          dependsOnIds: [],
+          schedule: {
+            rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
+            timezone: "UTC",
+            startLocal: "2027-04-19T09:00:00",
+            enabled: true,
+            nextRunAt,
+          },
+          version: template.version,
+        });
+        expect(updated.kind).toBe("UPDATED");
+        const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: template.id } });
+        if (schedule === null) throw new Error("expected a persisted schedule");
+
+        const runtime = await startRecurrenceWorker({ prisma, redisUrl });
+        try {
+          let occurrence = null;
+          for (let attempt = 0; attempt < 40 && occurrence === null; attempt += 1) {
+            occurrence = await prisma.scheduleOccurrence.findUnique({
+              where: {
+                scheduleId_scheduledAt: { scheduleId: schedule.id, scheduledAt: nextRunAt },
+              },
+            });
+            if (occurrence === null) await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          expect(occurrence).not.toBeNull();
+        } finally {
+          await runtime.close();
+        }
+      },
+    );
+
+    it("persists a schedule through a versioned task update and cancels it on deletion", async () => {
+      const task = await create("Recurring task");
+      const updated = await repository.updateForMember(task.id, ids.contributor, {
+        name: task.name,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        assigneeId: null,
+        reporterId: ids.contributor,
+        dueDate: null,
+        dependsOnIds: [],
+        schedule: {
+          rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
+          timezone: "America/New_York",
+          startLocal: "2027-04-19T09:00:00",
+          enabled: true,
+          nextRunAt: new Date("2027-04-20T13:00:00.000Z"),
+        },
+        version: task.version,
+      });
+      expect(updated).toMatchObject({
+        kind: "UPDATED",
+        task: { recurrence: { schedule: { enabled: true } } },
+      });
+      const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: task.id } });
+      expect(schedule).toMatchObject({ timezone: "America/New_York", enabled: true });
+      if (schedule === null) throw new Error("expected a persisted schedule");
+      await expect(
+        repository.deleteForMember(task.id, ids.contributor, task.version + 1),
+      ).resolves.toBe("DELETED");
+      await expect(
+        prisma.taskSchedule.findFirst({ where: { id: schedule.id } }),
+      ).resolves.toMatchObject({
+        taskId: null,
+        enabled: false,
+        nextRunAt: null,
+      });
     });
   });
 });

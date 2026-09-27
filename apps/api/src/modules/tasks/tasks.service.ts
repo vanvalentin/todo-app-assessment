@@ -10,6 +10,7 @@ import type {
   UpdateTaskRequest,
 } from "@ksat/contracts";
 import { HttpError } from "../../errors.js";
+import { parseSchedule, RecurrenceValidationError } from "./recurrence.js";
 import {
   decodeTaskCursor,
   encodeTaskCursor,
@@ -21,6 +22,7 @@ import type {
   TaskRow,
   TasksRepository,
   TaskWriteViolation,
+  TaskScheduleWrite,
 } from "./tasks.types.js";
 
 export const DEFAULT_TASK_PAGE_LIMIT = 50;
@@ -82,7 +84,34 @@ function toTask(row: TaskRow): Task {
     version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    ...(row.recurrence !== undefined ? { recurrence: row.recurrence } : {}),
   };
+}
+
+function recurrenceError(error: RecurrenceValidationError): HttpError {
+  const detail =
+    error.code === "TIMEZONE_INVALID"
+      ? "The recurrence timezone must be a valid IANA timezone."
+      : error.code === "SCHEDULE_NO_FUTURE_OCCURRENCES"
+        ? "The recurrence has no future occurrences."
+        : "The recurrence rule is invalid or unsupported.";
+  const code =
+    error.code === "TIMEZONE_INVALID"
+      ? "TASK_SCHEDULE_TIMEZONE_INVALID"
+      : error.code === "SCHEDULE_NO_FUTURE_OCCURRENCES"
+        ? "TASK_SCHEDULE_NO_FUTURE_OCCURRENCES"
+        : "TASK_SCHEDULE_INVALID";
+  return new HttpError(422, code, detail);
+}
+
+function scheduleInput(input: CreateTaskRequest["schedule"]): TaskScheduleWrite | null {
+  if (input === undefined || input === null) return null;
+  try {
+    return parseSchedule(input);
+  } catch (error) {
+    if (error instanceof RecurrenceValidationError) throw recurrenceError(error);
+    throw error;
+  }
 }
 
 function boardNotFound(): HttpError {
@@ -263,6 +292,7 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         reporterId: input.reporterId ?? userId,
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
+        ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),
       });
       if (result.kind === "NOT_FOUND") throw boardNotFound();
       if (result.kind !== "CREATED") throw writeViolation(result.kind);
@@ -288,6 +318,7 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         reporterId: input.reporterId,
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
+        ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),
         version: input.version,
       });
       if (result.kind === "NOT_FOUND") throw taskNotFound();
