@@ -9,15 +9,23 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { taskStatusSchema, type Task, type TaskStatus } from "@ksat/contracts";
+import {
+  activeTaskStatusSchema,
+  taskDueFilterSchema,
+  taskPrioritySchema,
+  taskSortSchema,
+  taskStatusSchema,
+  type Task,
+  type TaskStatus,
+} from "@ksat/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import archiveIcon from "../../assets/tasks/archive-toggle.svg";
 import settingsIcon from "../../assets/boards/board-settings.svg";
 import newTaskPlus from "../../assets/tasks/new-task-plus.svg";
 import searchIcon from "../../assets/tasks/board-search.svg";
-import chevronIcon from "../../assets/tasks/select-chevron.svg";
 import { AppShell } from "../../components/AppShell/AppShell";
+import { Select } from "../../components/Select/Select";
 import { Toast, type ToastTone } from "../../components/Toast/Toast";
 import { useSession } from "../auth/useSession";
 import { fetchBoard } from "../../lib/api/boards";
@@ -40,6 +48,25 @@ import { useTaskBoardSearch } from "./useTaskBoardSearch";
 import { useTaskMutations, type TaskEditValues } from "./useTaskMutations";
 import styles from "./TaskBoardPage.module.scss";
 
+const ALL_VALUE = "__all__";
+
+interface FilterSelectProps {
+  readonly label: string;
+  readonly value: string;
+  readonly options: readonly { readonly value: string; readonly label: string }[];
+  readonly onChange: (value: string) => void;
+}
+
+function FilterSelect({ label, value, options, onChange }: FilterSelectProps) {
+  return (
+    <Select
+      label={label}
+      value={value || ALL_VALUE}
+      options={options}
+      onChange={(next) => onChange(next === ALL_VALUE ? "" : next)}
+    />
+  );
+}
 interface TaskNotice {
   /** Restarts the toast countdown for each new message. */
   readonly id: number;
@@ -167,7 +194,6 @@ export function TaskBoardPage() {
         status,
         priority: task.priority,
         assignee: task.assignee,
-        reporter: task.reporter,
         dueDate: task.dueDate,
         description: task.description,
         dependsOn: task.dependsOn,
@@ -320,82 +346,100 @@ export function TaskBoardPage() {
                   onChange={(event) => search.setSearchInput(event.target.value)}
                 />
               </div>
+              <button
+                ref={newTaskRef}
+                className={styles.newTask}
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={createOpen}
+                onClick={(event) => openCreate(event.currentTarget)}
+              >
+                <img src={newTaskPlus} alt="" width={8.167} height={8.167} />
+                <span>New Task</span>
+              </button>
               <div className={styles.controlGroup}>
-                <span className={styles.selectShell}>
-                  <select
-                    aria-label="Filter by assignee"
-                    value={search.assignee}
-                    onChange={(event) => search.setAssignee(event.target.value)}
-                  >
-                    <option value="">Assignee: All</option>
-                    <option value="me">Assignee: Me</option>
-                    <option value="none">Assignee: Unassigned</option>
-                    {members.map((member) => (
-                      <option key={member.id} value={member.id}>
-                        Assignee: {member.name}
-                      </option>
-                    ))}
-                  </select>
-                  <img src={chevronIcon} alt="" width={18} height={18} />
-                </span>
-                <span className={styles.selectShell}>
-                  <select
-                    aria-label="Filter by priority"
-                    value={search.priority}
-                    onChange={(event) =>
-                      search.setPriority(event.target.value as typeof search.priority)
+                <FilterSelect
+                  label="Filter by assignee"
+                  value={search.assignee}
+                  onChange={search.setAssignee}
+                  options={[
+                    { value: ALL_VALUE, label: "Assignee: All" },
+                    { value: "me", label: "Assignee: Me" },
+                    { value: "none", label: "Assignee: Unassigned" },
+                    ...members.map((member) => ({
+                      value: member.id,
+                      label: `Assignee: ${member.name}`,
+                    })),
+                  ]}
+                />
+                <FilterSelect
+                  label="Filter by priority"
+                  value={search.priority}
+                  onChange={(value) => {
+                    if (value === "") search.setPriority("");
+                    else {
+                      const parsed = taskPrioritySchema.safeParse(value);
+                      if (parsed.success) search.setPriority(parsed.data);
                     }
-                  >
-                    <option value="">Priority: All</option>
-                    <option value="HIGH">Priority: High</option>
-                    <option value="MEDIUM">Priority: Medium</option>
-                    <option value="LOW">Priority: Low</option>
-                  </select>
-                  <img src={chevronIcon} alt="" width={18} height={18} />
-                </span>
-                <span className={styles.selectShell}>
-                  <select
-                    aria-label="Filter by status"
-                    value={search.status}
-                    onChange={(event) =>
-                      search.setStatus(event.target.value as typeof search.status)
+                  }}
+                  options={[
+                    { value: ALL_VALUE, label: "Priority: All" },
+                    { value: "HIGH", label: "Priority: High" },
+                    { value: "MEDIUM", label: "Priority: Medium" },
+                    { value: "LOW", label: "Priority: Low" },
+                  ]}
+                />
+                <FilterSelect
+                  label="Filter by status"
+                  value={search.status}
+                  onChange={(value) => {
+                    if (value === "") search.setStatus("");
+                    else {
+                      const parsed = activeTaskStatusSchema.safeParse(value);
+                      if (parsed.success) search.setStatus(parsed.data);
                     }
-                  >
-                    <option value="">Status: All</option>
-                    <option value="NOT_STARTED">Status: Not Started</option>
-                    <option value="IN_PROGRESS">Status: In Progress</option>
-                    <option value="COMPLETED">Status: Completed</option>
-                  </select>
-                  <img src={chevronIcon} alt="" width={18} height={18} />
-                </span>
-                <span className={styles.selectShell}>
-                  <select
-                    aria-label="Filter by due date"
-                    value={search.due}
-                    onChange={(event) => search.setDue(event.target.value as typeof search.due)}
-                  >
-                    <option value="">Due: Any</option>
-                    <option value="OVERDUE">Due: Overdue</option>
-                    <option value="TODAY">Due: Today</option>
-                    <option value="NEXT_7_DAYS">Due: Next 7 days</option>
-                    <option value="NONE">Due: No due date</option>
-                  </select>
-                  <img src={chevronIcon} alt="" width={18} height={18} />
-                </span>
-                <span className={styles.selectShell}>
-                  <select
-                    aria-label="Sort tasks by"
-                    value={search.sort}
-                    onChange={(event) => search.setSort(event.target.value as typeof search.sort)}
-                  >
-                    <option value="DUE_DATE">Sort: Due date</option>
-                    <option value="PRIORITY">Sort: Priority</option>
-                    <option value="NEWEST">Sort: Newest</option>
-                    <option value="OLDEST">Sort: Oldest</option>
-                    <option value="NAME">Sort: Name (A–Z)</option>
-                  </select>
-                  <img src={chevronIcon} alt="" width={18} height={18} />
-                </span>
+                  }}
+                  options={[
+                    { value: ALL_VALUE, label: "Status: All" },
+                    { value: "NOT_STARTED", label: "Status: Not Started" },
+                    { value: "IN_PROGRESS", label: "Status: In Progress" },
+                    { value: "COMPLETED", label: "Status: Completed" },
+                  ]}
+                />
+                <FilterSelect
+                  label="Filter by due date"
+                  value={search.due}
+                  onChange={(value) => {
+                    if (value === "") search.setDue("");
+                    else {
+                      const parsed = taskDueFilterSchema.safeParse(value);
+                      if (parsed.success) search.setDue(parsed.data);
+                    }
+                  }}
+                  options={[
+                    { value: ALL_VALUE, label: "Due: Any" },
+                    { value: "OVERDUE", label: "Due: Overdue" },
+                    { value: "TODAY", label: "Due: Today" },
+                    { value: "NEXT_7_DAYS", label: "Due: Next 7 days" },
+                    { value: "NONE", label: "Due: No due date" },
+                  ]}
+                />
+                <FilterSelect
+                  label="Sort tasks by"
+                  value={search.sort}
+                  onChange={(value) => {
+                    const parsed = taskSortSchema.safeParse(value);
+                    if (parsed.success) search.setSort(parsed.data);
+                  }}
+                  options={[
+                    { value: "DUE_DATE", label: "Sort: Due date" },
+                    { value: "PRIORITY", label: "Sort: Priority" },
+                    { value: "NEWEST", label: "Sort: Newest" },
+                    { value: "OLDEST", label: "Sort: Oldest" },
+                    { value: "NAME", label: "Sort: Name (A–Z)" },
+                  ]}
+                />
+
                 <button
                   className={styles.archiveToggle}
                   type="button"
@@ -414,17 +458,6 @@ export function TaskBoardPage() {
                     Clear filters
                   </button>
                 ) : null}
-                <button
-                  ref={newTaskRef}
-                  className={styles.newTask}
-                  type="button"
-                  aria-haspopup="dialog"
-                  aria-expanded={createOpen}
-                  onClick={(event) => openCreate(event.currentTarget)}
-                >
-                  <img src={newTaskPlus} alt="" width={8.167} height={8.167} />
-                  <span>New Task</span>
-                </button>
               </div>
             </section>
 
@@ -535,7 +568,6 @@ export function TaskBoardPage() {
         <TaskModal
           boardId={board.id}
           boardName={board.name}
-          currentUser={currentUser}
           onClose={closeCreate}
           onCreate={(values) => createMutation.mutateAsync(values)}
           onSave={submitEdit}
@@ -545,7 +577,6 @@ export function TaskBoardPage() {
         <TaskModal
           boardId={board.id}
           boardName={board.name}
-          currentUser={currentUser}
           task={editing}
           onClose={closeEdit}
           onRequestDelete={() => {

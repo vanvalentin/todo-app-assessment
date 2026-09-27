@@ -183,7 +183,6 @@ describe("TaskBoardPage", () => {
       status: "IN_PROGRESS",
       priority: "MEDIUM",
       assigneeId: null,
-      reporterId: notStarted.reporter.id,
       dueDate: null,
       description: null,
       dependsOnIds: [],
@@ -302,10 +301,12 @@ describe("TaskBoardPage", () => {
     await within(await column("Not Started")).findByText(notStarted.name);
 
     const user = userEvent.setup();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by priority" }), "HIGH");
+    await user.click(screen.getByRole("combobox", { name: "Filter by priority" }));
+    await user.click(await screen.findByRole("option", { name: "Priority: High" }));
 
     await waitFor(() => expect(lastQuery).toContain("priority=HIGH"));
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by priority" }), "");
+    await user.click(screen.getByRole("combobox", { name: "Filter by priority" }));
+    await user.click(await screen.findByRole("option", { name: "Priority: All" }));
     expect(
       await within(await column("Not Started")).findByText(notStarted.name),
     ).toBeInTheDocument();

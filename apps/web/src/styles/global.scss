@@ -1,4 +1,5 @@
 @use "tokens";
+@use "mixins";
 
 * {
   box-sizing: border-box;
@@ -30,8 +31,14 @@ select {
 }
 
 :focus-visible {
-  outline: 0.1875rem solid var(--color-focus);
-  outline-offset: 0.1875rem;
+  outline: 0.125rem solid var(--color-focus);
+  outline-offset: 0.125rem;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  @include mixins.control-focus;
 }
 
 /* Available to assistive technology without affecting the editorial composition. */

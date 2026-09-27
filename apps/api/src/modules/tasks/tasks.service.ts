@@ -48,8 +48,8 @@ export interface TasksServiceDeps {
 
 /**
  * Task rules for the Kanban slice. Every active board member, including
- * CONTRIBUTOR, may manage tasks, may set any active member as assignee or
- * reporter, and may make a task depend on any other task on the same board; only membership itself is required, and the repository enforces it
+ * CONTRIBUTOR, may manage tasks, may set any active member as assignee, and may
+ * make a task depend on any other task on the same board; only membership itself is required, and the repository enforces it
  * inside each transaction rather than trusting the caller. Search, filter, sort,
  * and archive visibility (phase 4c) are resolved here before reaching the
  * repository, which stays a thin, filter-shaped Prisma query.
@@ -78,7 +78,6 @@ function toTask(row: TaskRow): Task {
     priority: row.priority,
     dependsOn: row.dependsOn.map((reference) => ({ ...reference })),
     assignee: row.assignee,
-    reporter: row.reporter,
     dueDate: formatDueDate(row.dueDate),
     createdBy: row.createdBy,
     version: row.version,
@@ -134,14 +133,6 @@ function assigneeNotMember(): HttpError {
   );
 }
 
-function reporterNotMember(): HttpError {
-  return new HttpError(
-    422,
-    "TASK_REPORTER_NOT_MEMBER",
-    "The reporter must be an active member of this board.",
-  );
-}
-
 function dependencyNotFound(): HttpError {
   return new HttpError(
     422,
@@ -175,8 +166,6 @@ function writeViolation(kind: TaskWriteViolation["kind"]): HttpError {
   switch (kind) {
     case "ASSIGNEE_NOT_MEMBER":
       return assigneeNotMember();
-    case "REPORTER_NOT_MEMBER":
-      return reporterNotMember();
     case "DEPENDENCY_NOT_FOUND":
       return dependencyNotFound();
     case "DEPENDENCIES_INCOMPLETE":
@@ -288,8 +277,7 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         status: input.status,
         priority: input.priority,
         assigneeId: input.assigneeId,
-        // Omitted defaults to the caller; any active member may be named instead.
-        reporterId: input.reporterId ?? userId,
+        // The assignee may be any active board member.
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
         ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),
@@ -315,7 +303,6 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         status: input.status,
         priority: input.priority,
         assigneeId: input.assigneeId,
-        reporterId: input.reporterId,
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
         ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),

@@ -110,7 +110,7 @@ export type TaskReference = z.infer<typeof taskReferenceSchema>;
 /**
  * A task as returned by the API. Attachment metadata remains a separate child
  * resource; recurrence metadata is embedded when the task is a template or occurrence.
- * Assignee, reporter, and due date arrive in phase 4b; Markdown and dependencies in phase 5a.
+ * Assignee and due date arrive in phase 4b; Markdown and dependencies in phase 5a.
  */
 export const taskSchema = z
   .object({
@@ -126,8 +126,6 @@ export const taskSchema = z
     dependsOn: z.array(taskReferenceSchema).max(TASK_DEPENDENCIES_MAX),
     /** Optional: no board member is assigned by default. */
     assignee: userPreviewSchema.nullable(),
-    /** Always set: defaults to the creator and can be reassigned to any active member. */
-    reporter: userPreviewSchema,
     /** A calendar date, not a timestamp: overdue/days-left is computed from the viewer's local date. */
     dueDate: isoDateSchema.nullable(),
     createdBy: userPreviewSchema,
@@ -151,8 +149,6 @@ export const createTaskRequestSchema = z
     priority: taskPrioritySchema.default("MEDIUM"),
     /** Any active board member id, or null to leave the task unassigned. */
     assigneeId: uuidSchema.nullable().default(null),
-    /** Omitted defaults to the caller; any active board member may be named instead. */
-    reporterId: uuidSchema.optional(),
     dueDate: isoDateSchema.nullable().default(null),
     /** Ids of other tasks on the same board that this task depends on. */
     dependsOnIds: dependsOnIdsSchema.default([]),
@@ -175,7 +171,6 @@ export const updateTaskRequestSchema = z
     status: taskStatusSchema,
     priority: taskPrioritySchema,
     assigneeId: uuidSchema.nullable(),
-    reporterId: uuidSchema,
     dueDate: isoDateSchema.nullable(),
     /** Replaces the full prerequisite set; an empty array clears it. */
     dependsOnIds: dependsOnIdsSchema,

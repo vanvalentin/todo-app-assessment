@@ -82,7 +82,7 @@ run("PostgreSQL tasks", () => {
     });
     // A second board the outsider belongs to, so "outsider is a member of *some*
     // board" cannot be mistaken for "outsider is a member of *this* board" by the
-    // composite assignee/reporter foreign key.
+    // composite assignee foreign key.
     await prisma.board.create({
       data: {
         id: ids.otherBoard,
@@ -115,7 +115,6 @@ run("PostgreSQL tasks", () => {
           assigneeId: null,
           description: null,
           dependsOnIds: [],
-          reporterId: ids.contributor,
           dueDate: null,
         }),
       ),
@@ -128,7 +127,7 @@ run("PostgreSQL tasks", () => {
     expect([...sequences].sort((left, right) => left - right)).toEqual([1, 2, 3, 4, 5]);
     expect(results[0]).toMatchObject({
       kind: "CREATED",
-      task: { createdBy: creator, reporter: contributorPreview, assignee: null, version: 1 },
+      task: { createdBy: creator, assignee: null, version: 1 },
     });
   });
 
@@ -141,40 +140,12 @@ run("PostgreSQL tasks", () => {
         assigneeId: null,
         description: null,
         dependsOnIds: [],
-        reporterId: ids.outsider,
         dueDate: null,
       }),
     ).resolves.toEqual({ kind: "NOT_FOUND" });
   });
 
-  it("rejects an assignee or reporter who is not a member of this board", async () => {
-    const badAssignee = await repository.createForMember(ids.board, ids.contributor, {
-      name: "Bad assignee",
-      status: "NOT_STARTED",
-      priority: "LOW",
-      // The outsider is a member of otherBoard, not this board.
-      assigneeId: ids.outsider,
-      description: null,
-      dependsOnIds: [],
-      reporterId: ids.contributor,
-      dueDate: null,
-    });
-    expect(badAssignee).toEqual({ kind: "ASSIGNEE_NOT_MEMBER" });
-
-    const badReporter = await repository.createForMember(ids.board, ids.contributor, {
-      name: "Bad reporter",
-      status: "NOT_STARTED",
-      priority: "LOW",
-      assigneeId: null,
-      description: null,
-      dependsOnIds: [],
-      reporterId: ids.outsider,
-      dueDate: null,
-    });
-    expect(badReporter).toEqual({ kind: "REPORTER_NOT_MEMBER" });
-  });
-
-  it("creates and updates a task with an assignee, reporter, and due date", async () => {
+  it("creates and updates a task with an assignee and due date", async () => {
     const created = await repository.createForMember(ids.board, ids.admin, {
       name: "Curate the booth",
       status: "NOT_STARTED",
@@ -182,14 +153,12 @@ run("PostgreSQL tasks", () => {
       assigneeId: ids.contributor,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.admin,
       dueDate: "2027-04-18",
     });
     expect(created).toMatchObject({
       kind: "CREATED",
       task: {
         assignee: contributorPreview,
-        reporter: adminPreview,
         dueDate: new Date("2027-04-18T00:00:00.000Z"),
       },
     });
@@ -202,7 +171,6 @@ run("PostgreSQL tasks", () => {
       assigneeId: ids.admin,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.contributor,
       dueDate: "2027-05-01",
       version: created.task.version,
     });
@@ -210,7 +178,6 @@ run("PostgreSQL tasks", () => {
       kind: "UPDATED",
       task: {
         assignee: adminPreview,
-        reporter: contributorPreview,
         dueDate: new Date("2027-05-01T00:00:00.000Z"),
       },
     });
@@ -222,7 +189,6 @@ run("PostgreSQL tasks", () => {
       assigneeId: ids.outsider,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.contributor,
       dueDate: null,
       version: moved.kind === "UPDATED" ? moved.task.version : 0,
     });
@@ -275,7 +241,6 @@ run("PostgreSQL tasks", () => {
         assigneeId: null,
         description: null,
         dependsOnIds: [],
-        reporterId: ids.contributor,
         dueDate: null,
         version: target.version,
       }),
@@ -286,7 +251,6 @@ run("PostgreSQL tasks", () => {
         assigneeId: null,
         description: null,
         dependsOnIds: [],
-        reporterId: ids.contributor,
         dueDate: null,
         version: target.version,
       }),
@@ -305,7 +269,6 @@ run("PostgreSQL tasks", () => {
       assigneeId: null,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.contributor,
       dueDate: null,
       version: target.version,
     });
@@ -318,7 +281,6 @@ run("PostgreSQL tasks", () => {
         assigneeId: null,
         description: null,
         dependsOnIds: [],
-        reporterId: ids.contributor,
         dueDate: null,
         version: stored.version,
       }),
@@ -338,7 +300,6 @@ run("PostgreSQL tasks", () => {
       assigneeId: null,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.admin,
       dueDate: null,
     });
     if (created.kind !== "CREATED") throw new Error("expected a created task");
@@ -364,7 +325,6 @@ run("PostgreSQL tasks", () => {
       assigneeId: ids.contributor,
       description: null,
       dependsOnIds: [],
-      reporterId: ids.admin,
       dueDate: null,
     });
     if (created.kind !== "CREATED") throw new Error("expected a created task");
@@ -476,7 +436,6 @@ run("PostgreSQL tasks", () => {
           assigneeId: spec.assigneeId,
           description: null,
           dependsOnIds: [],
-          reporterId: ids.admin,
           dueDate: spec.dueDate,
         });
         if (created.kind !== "CREATED") throw new Error("expected a created task");
@@ -686,7 +645,6 @@ run("PostgreSQL tasks", () => {
         status: "NOT_STARTED",
         priority: "MEDIUM",
         assigneeId: null,
-        reporterId: ids.contributor,
         dueDate: null,
         dependsOnIds,
       });
@@ -701,7 +659,6 @@ run("PostgreSQL tasks", () => {
         status: task.status,
         priority: task.priority,
         assigneeId: null,
-        reporterId: ids.contributor,
         dueDate: null,
         dependsOnIds,
         version,
@@ -715,7 +672,6 @@ run("PostgreSQL tasks", () => {
         status,
         priority: task.priority,
         assigneeId: null,
-        reporterId: ids.contributor,
         dueDate: null,
         dependsOnIds: task.dependsOn.map((dependency) => dependency.id),
         version: task.version,
@@ -753,7 +709,6 @@ run("PostgreSQL tasks", () => {
           boardId: ids.otherBoard,
           sequence: 900,
           name: "Other board task",
-          reporterId: ids.outsider,
           createdById: ids.outsider,
         },
       });
@@ -789,7 +744,6 @@ run("PostgreSQL tasks", () => {
           status: "COMPLETED",
           priority: "MEDIUM",
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: [prerequisite.id],
         }),
@@ -826,7 +780,6 @@ run("PostgreSQL tasks", () => {
           status: "COMPLETED",
           priority: "MEDIUM",
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: [prerequisite.id],
         }),
@@ -872,7 +825,6 @@ run("PostgreSQL tasks", () => {
           status: "COMPLETED",
           priority: current.priority,
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: [...current.dependsOn.map((dependency) => dependency.id), downstream.id],
           version: current.version,
@@ -908,7 +860,6 @@ run("PostgreSQL tasks", () => {
           status: progressed.status,
           priority: progressed.priority,
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: progressed.dependsOn.map((dependency) => dependency.id),
           version: progressed.version,
@@ -932,7 +883,6 @@ run("PostgreSQL tasks", () => {
           status: "NOT_STARTED",
           priority: "MEDIUM",
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: [otherBoardTaskId],
         }),
@@ -1018,7 +968,6 @@ run("PostgreSQL tasks", () => {
         status: template.status,
         priority: "HIGH",
         assigneeId: ids.admin,
-        reporterId: ids.contributor,
         dueDate: null,
         dependsOnIds: [],
         schedule: {
@@ -1051,7 +1000,6 @@ run("PostgreSQL tasks", () => {
         status: "NOT_STARTED",
         priority: "HIGH",
         assigneeId: ids.admin,
-        reporterId: ids.contributor,
         dueDate: new Date("2027-04-20T00:00:00.000Z"),
       });
       expect(await prisma.scheduleOccurrence.count({ where: { scheduleId: schedule.id } })).toBe(1);
@@ -1070,7 +1018,6 @@ run("PostgreSQL tasks", () => {
           status: template.status,
           priority: template.priority,
           assigneeId: null,
-          reporterId: ids.contributor,
           dueDate: null,
           dependsOnIds: [],
           schedule: {
@@ -1112,7 +1059,6 @@ run("PostgreSQL tasks", () => {
         status: task.status,
         priority: task.priority,
         assigneeId: null,
-        reporterId: ids.contributor,
         dueDate: null,
         dependsOnIds: [],
         schedule: {

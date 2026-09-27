@@ -1,0 +1,1 @@
+Ksat e2e attachment fixture file.

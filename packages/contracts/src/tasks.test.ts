@@ -21,7 +21,6 @@ const assignee = {
   name: "Grace",
   avatarSeed: "seed-2",
 };
-const reporter = { id: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f30", name: "Ada", avatarSeed: "seed-1" };
 
 const validTask = {
   id: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f2e",
@@ -40,9 +39,8 @@ const validTask = {
     },
   ],
   assignee,
-  reporter,
   dueDate: "2027-04-18",
-  createdBy: reporter,
+  createdBy: { id: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f30", name: "Ada", avatarSeed: "seed-1" },
   version: 1,
   createdAt: "2024-01-01T00:00:00.000Z",
   updatedAt: "2024-01-02T00:00:00.000Z",
@@ -81,7 +79,6 @@ describe("task contracts", () => {
     });
     expect(taskSchema.safeParse({ ...validTask, tokenHash: "leak" }).success).toBe(false);
     expect(taskSchema.safeParse({ ...validTask, sequence: 0 }).success).toBe(false);
-    expect(taskSchema.safeParse({ ...validTask, reporter: null }).success).toBe(false);
   });
 
   it("defaults an incomplete creation request to NOT_STARTED, MEDIUM, no assignee, and no due date", () => {
@@ -101,15 +98,14 @@ describe("task contracts", () => {
     );
   });
 
-  it("accepts an explicit assignee, reporter, and due date on creation", () => {
+  it("accepts an explicit assignee and due date on creation", () => {
     expect(
       createTaskRequestSchema.parse({
         name: "Task",
         assigneeId: assignee.id,
-        reporterId: reporter.id,
         dueDate: "2027-04-18",
       }),
-    ).toMatchObject({ assigneeId: assignee.id, reporterId: reporter.id, dueDate: "2027-04-18" });
+    ).toMatchObject({ assigneeId: assignee.id, dueDate: "2027-04-18" });
     expect(createTaskRequestSchema.safeParse({ name: "Task", dueDate: "not-a-date" }).success).toBe(
       false,
     );
@@ -125,7 +121,6 @@ describe("task contracts", () => {
         status: "ARCHIVED",
         priority: "LOW",
         assigneeId: null,
-        reporterId: reporter.id,
         dueDate: null,
         description: null,
         dependsOnIds: [],
@@ -138,7 +133,6 @@ describe("task contracts", () => {
         status: "IN_PROGRESS",
         priority: "LOW",
         assigneeId: null,
-        reporterId: reporter.id,
         dueDate: null,
         description: null,
         dependsOnIds: [],
@@ -147,14 +141,13 @@ describe("task contracts", () => {
     ).toBe(true);
   });
 
-  it("requires a version, reporter, assignee, and due date for updates", () => {
+  it("requires a version, assignee, and due date for updates", () => {
     expect(
       updateTaskRequestSchema.parse({
         name: "  Renamed  ",
         status: "IN_PROGRESS",
         priority: "LOW",
         assigneeId: assignee.id,
-        reporterId: reporter.id,
         dueDate: "2027-04-18",
         description: "  - keep indentation\n",
         dependsOnIds: [validTask.dependsOn[0]?.id],
@@ -165,7 +158,6 @@ describe("task contracts", () => {
       status: "IN_PROGRESS",
       priority: "LOW",
       assigneeId: assignee.id,
-      reporterId: reporter.id,
       dueDate: "2027-04-18",
       description: "  - keep indentation\n",
       dependsOnIds: [validTask.dependsOn[0]?.id],
@@ -176,7 +168,6 @@ describe("task contracts", () => {
         name: "Task",
         status: "COMPLETED",
         priority: "LOW",
-        reporterId: reporter.id,
         dueDate: null,
       }).success,
     ).toBe(false);

@@ -1,0 +1,12 @@
+@use "tokens" as tokens;
+
+@mixin control-focus {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 0.125rem var(--focus-ring);
+  outline: none;
+}
+
+@mixin action-focus {
+  outline: 0.125rem solid var(--color-focus);
+  outline-offset: 0.125rem;
+}

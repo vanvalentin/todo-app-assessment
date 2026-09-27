@@ -113,7 +113,6 @@ describe("TaskModal", () => {
         status: "IN_PROGRESS",
         priority: "HIGH",
         assigneeId: USER_IDS.grace,
-        reporterId: USER_IDS.ada,
         dueDate: "2027-04-18",
         description: null,
         dependsOnIds: [],
@@ -137,11 +136,11 @@ describe("TaskModal", () => {
     fireEvent.click(within(modal).getByRole("button", { name: "Create task" }));
 
     await waitFor(() => expect(posted).toHaveLength(1));
+    expect(within(modal).getByRole("status")).toHaveTextContent(
+      "Created \u201cFirst\u201d. Add the next task.",
+    );
     expect(within(modal).getByLabelText("Task name")).toHaveValue("");
     expect(within(modal).getByLabelText("Task name")).toHaveFocus();
-    expect(within(modal).getByRole("combobox", { name: "Reporter" })).toHaveTextContent(
-      "Ada Lovelace",
-    );
   });
 
   it("marks non-member assignee errors on the pill", async () => {
@@ -265,7 +264,7 @@ describe("TaskModal", () => {
     renderBoard();
     const { modal } = await openCreateModal();
     const createGuidance = within(modal).getByText(
-      "Every dependency must be Completed before this task can move to In Progress or Completed. Archived dependencies don’t block it.",
+      /Every dependency must be Completed before this task can move to In Progress or Completed/,
     );
     expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
       "aria-describedby",
@@ -321,7 +320,7 @@ describe("TaskModal", () => {
     await screen.findByText(described.name);
     const modal = await openTaskModal(described.name);
     const editGuidance = within(modal).getByText(
-      "Every dependency must be Completed before this task can move to In Progress or Completed. Archived dependencies don’t block it.",
+      /Every dependency must be Completed before this task can move to In Progress or Completed/,
     );
     expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
       "aria-describedby",

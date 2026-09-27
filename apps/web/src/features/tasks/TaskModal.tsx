@@ -28,7 +28,7 @@ import { ApiError } from "../../lib/api/client";
 import { fetchTask } from "../../lib/api/tasks";
 import { uploadTaskAttachment } from "../../lib/api/attachments";
 import type { TaskEditValues } from "./useTaskMutations";
-import { AssigneePill, DueDatePill, PriorityPill, ReporterPill, StatusPill } from "./PropertyPills";
+import { AssigneePill, DueDatePill, PriorityPill, StatusPill } from "./PropertyPills";
 import { DependencyPicker } from "./DependencyPicker";
 import { DescriptionField } from "./DescriptionField";
 import { AttachmentField } from "./AttachmentField";
@@ -49,7 +49,6 @@ type NameFormValues = z.infer<typeof nameFormSchema>;
 export interface TaskModalProps {
   readonly boardId: string;
   readonly boardName: string;
-  readonly currentUser: UserPreview;
   /** Editing an existing task; omitted while creating a new one. */
   readonly task?: Task;
   /** Column preselected when creating from a specific column. */
@@ -90,7 +89,6 @@ function formatUpdatedAt(iso: string): string {
 export function TaskModal({
   boardId,
   boardName,
-  currentUser,
   task,
   initialStatus = "NOT_STARTED",
   onClose,
@@ -108,15 +106,15 @@ export function TaskModal({
   const [isExpanded, setIsExpanded] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [createMore, setCreateMore] = useState(false);
+  /** Name of the task just created while Create more keeps the modal open. */
+  const [lastCreated, setLastCreated] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [baselineTask, setBaselineTask] = useState<Task | undefined>(task);
   const [assigneeError, setAssigneeError] = useState<string | null>(null);
-  const [reporterError, setReporterError] = useState<string | null>(null);
 
   const [status, setStatus] = useState<TaskStatus>(task ? task.status : initialStatus);
   const [priority, setPriority] = useState<TaskPriority>(task?.priority ?? "MEDIUM");
   const [assignee, setAssignee] = useState<UserPreview | null>(task?.assignee ?? null);
-  const [reporter, setReporter] = useState<UserPreview>(task?.reporter ?? currentUser);
   const [dueDate, setDueDate] = useState<string | null>(task?.dueDate ?? null);
   const [description, setDescription] = useState<string>(task?.description ?? "");
   const [attachmentFiles, setAttachmentFiles] = useState<readonly File[]>([]);
@@ -130,7 +128,6 @@ export function TaskModal({
 
   const { members } = useBoardMembers(boardId);
   const assigneeOptions = withKnownPerson(members, assignee);
-  const reporterOptions = withKnownPerson(members, reporter);
 
   const form = useForm<NameFormValues>({
     resolver: zodResolver(nameFormSchema),
@@ -151,7 +148,6 @@ export function TaskModal({
     setStatus(latest.status);
     setPriority(latest.priority);
     setAssignee(latest.assignee);
-    setReporter(latest.reporter);
     setDueDate(latest.dueDate);
     setDescription(latest.description ?? "");
     setDependsOn(latest.dependsOn);
@@ -159,7 +155,6 @@ export function TaskModal({
     setDescriptionKey((key) => key + 1);
     setDependencyError(null);
     setAssigneeError(null);
-    setReporterError(null);
     setIsDirty(false);
   };
 
@@ -182,8 +177,8 @@ export function TaskModal({
   const performSave = async (values: NameFormValues, statusOverride?: TaskStatus) => {
     setSubmitError(null);
     setAssigneeError(null);
-    setReporterError(null);
     setDependencyError(null);
+    setLastCreated(null);
     setIsBusy(true);
     // The contract normalizes blank Markdown to null; mirror it for the optimistic cache.
     const descriptionValue = description.trim() === "" ? null : description;
@@ -196,7 +191,6 @@ export function TaskModal({
           status: effectiveStatus,
           priority,
           assignee,
-          reporter,
           dueDate,
           description: descriptionValue,
           dependsOn,
@@ -211,7 +205,6 @@ export function TaskModal({
           status: activeTaskStatusSchema.parse(effectiveStatus),
           priority,
           assigneeId: assignee?.id ?? null,
-          reporterId: reporter.id,
           dueDate,
           description: descriptionValue,
           dependsOnIds: dependsOn.map((reference) => reference.id),
@@ -234,6 +227,7 @@ export function TaskModal({
           setSchedule(null);
           setDescriptionKey((key) => key + 1);
           setIsDirty(false);
+          setLastCreated(values.name);
           nameInputRef.current?.focus();
         } else {
           onClose();
@@ -246,9 +240,6 @@ export function TaskModal({
         }
         if (error.code === "TASK_ASSIGNEE_NOT_MEMBER") {
           setAssigneeError("Choose an active board member or leave the task unassigned.");
-        }
-        if (error.code === "TASK_REPORTER_NOT_MEMBER") {
-          setReporterError("Choose an active board member as reporter.");
         }
         setDependencyError(dependencyErrorMessage(error.code));
       }
@@ -301,11 +292,9 @@ export function TaskModal({
               <strong>{breadcrumb}</strong>
             </div>
             <div className={styles.headerRight}>
-              {isEditing ? (
-                <span className={styles.saveState} aria-live="polite">
-                  {isDirty ? "Unsaved changes" : "Saved"}
-                </span>
-              ) : null}
+              <span className={styles.saveState} aria-live="polite">
+                {isEditing && isDirty ? "Unsaved changes" : ""}
+              </span>
               <button
                 className={styles.iconButton}
                 type="button"
@@ -400,26 +389,10 @@ export function TaskModal({
                 }}
                 disabled={isBusy}
               />
-              <ReporterPill
-                value={reporter}
-                members={reporterOptions}
-                onChange={(next) => {
-                  setReporter(next);
-                  setReporterError(null);
-                  markDirty();
-                }}
-                invalid={reporterError !== null}
-                disabled={isBusy}
-              />
             </div>
             {assigneeError === null ? null : (
               <p className={styles.fieldError} role="alert">
                 {assigneeError}
-              </p>
-            )}
-            {reporterError === null ? null : (
-              <p className={styles.fieldError} role="alert">
-                {reporterError}
               </p>
             )}
 
@@ -476,6 +449,14 @@ export function TaskModal({
                   </button>
                 ) : null}
               </div>
+            )}
+
+            {isEditing ? null : (
+              <p className={styles.createdNotice} role="status">
+                {lastCreated === null
+                  ? ""
+                  : `Created \u201c${lastCreated}\u201d. Add the next task.`}
+              </p>
             )}
 
             <div className={styles.footer}>

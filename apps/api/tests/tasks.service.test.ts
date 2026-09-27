@@ -17,7 +17,6 @@ const USER_ID = "01900000-0000-7000-8000-000000000002";
 const TASK_ID = "01900000-0000-7000-8000-000000000003";
 const ASSIGNEE_ID = "01900000-0000-7000-8000-000000000005";
 
-const reporterPreview = { id: USER_ID, name: "Ada", avatarSeed: "seed" };
 const assigneePreview = { id: ASSIGNEE_ID, name: "Grace", avatarSeed: "grace-seed" };
 const PREREQUISITE_ID = "01900000-0000-7000-8000-000000000006";
 const prerequisite = {
@@ -32,7 +31,6 @@ const updateInput = {
   status: "NOT_STARTED" as const,
   priority: "MEDIUM" as const,
   assigneeId: null,
-  reporterId: USER_ID,
   dueDate: null,
   dependsOnIds: [PREREQUISITE_ID],
   version: 1,
@@ -49,7 +47,6 @@ function buildTask(overrides: Partial<TaskRow> = {}): TaskRow {
     priority: "MEDIUM" as TaskPriority,
     dependsOn: [],
     assignee: null,
-    reporter: reporterPreview,
     dueDate: null,
     createdBy: { id: USER_ID, name: "Ada", avatarSeed: "seed" },
     version: 1,
@@ -110,7 +107,6 @@ describe("tasks service", () => {
       priority: "MEDIUM",
       dependsOn: [prerequisite],
       assignee: assigneePreview,
-      reporter: reporterPreview,
       dueDate: "2027-04-18",
       createdBy: { id: USER_ID, name: "Ada", avatarSeed: "seed" },
       version: 1,
@@ -254,71 +250,8 @@ describe("tasks service", () => {
       assigneeId: null,
       description: null,
       dependsOnIds: [],
-      reporterId: USER_ID,
       dueDate: null,
     });
-  });
-
-  it("defaults the reporter to the caller, and any active member may name another reporter", async () => {
-    const createForMember = vi.fn(
-      async (): Promise<CreateTaskResult> => ({ kind: "CREATED", task: buildTask() }),
-    );
-    const service = createTasksService({ repository: repository({ createForMember }) });
-    await service.createTask(USER_ID, BOARD_ID, {
-      name: "Task",
-      status: "NOT_STARTED",
-      priority: "MEDIUM",
-      assigneeId: null,
-      description: null,
-      dependsOnIds: [],
-      reporterId: ASSIGNEE_ID,
-      dueDate: null,
-    });
-    expect(createForMember).toHaveBeenCalledWith(
-      BOARD_ID,
-      USER_ID,
-      expect.objectContaining({ reporterId: ASSIGNEE_ID }),
-    );
-  });
-
-  it("maps a non-member assignee or reporter to a 422 on create and update", async () => {
-    const createForMember = vi.fn(
-      async (): Promise<CreateTaskResult> => ({ kind: "ASSIGNEE_NOT_MEMBER" }),
-    );
-    const createService = createTasksService({ repository: repository({ createForMember }) });
-    expect(
-      await failureOf(
-        createService.createTask(USER_ID, BOARD_ID, {
-          name: "Task",
-          status: "NOT_STARTED",
-          priority: "MEDIUM",
-          assigneeId: "01900000-0000-7000-8000-000000000999",
-          description: null,
-          dependsOnIds: [],
-          dueDate: null,
-        }),
-      ),
-    ).toMatchObject({ status: 422, code: "TASK_ASSIGNEE_NOT_MEMBER" });
-
-    const updateForMember = vi.fn(
-      async (): Promise<UpdateTaskResult> => ({ kind: "REPORTER_NOT_MEMBER" }),
-    );
-    const updateService = createTasksService({ repository: repository({ updateForMember }) });
-    expect(
-      await failureOf(
-        updateService.updateTask(USER_ID, TASK_ID, {
-          name: "Task",
-          status: "NOT_STARTED",
-          priority: "MEDIUM",
-          assigneeId: null,
-          description: null,
-          dependsOnIds: [],
-          reporterId: "01900000-0000-7000-8000-000000000999",
-          dueDate: null,
-          version: 1,
-        }),
-      ),
-    ).toMatchObject({ status: 422, code: "TASK_REPORTER_NOT_MEMBER" });
   });
 
   it("rejects a task that depends on itself without touching the repository", async () => {
@@ -386,7 +319,6 @@ describe("tasks service", () => {
       assigneeId: null,
       description: null,
       dependsOnIds: [],
-      reporterId: USER_ID,
       dueDate: null,
       version: 1,
     };
@@ -420,7 +352,6 @@ describe("tasks service", () => {
           assigneeId: null,
           description: null,
           dependsOnIds: [],
-          reporterId: USER_ID,
           dueDate: null,
           version: 1,
         }),
@@ -455,7 +386,6 @@ describe("tasks service", () => {
       assigneeId: ASSIGNEE_ID,
       description: null,
       dependsOnIds: [],
-      reporterId: USER_ID,
       dueDate: "2027-05-01",
       version: 1,
     });

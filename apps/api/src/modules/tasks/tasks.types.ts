@@ -21,7 +21,7 @@ export interface TaskReferenceRow {
   readonly status: TaskStatus;
 }
 
-/** A persisted task row joined with the creator/assignee/reporter previews the API returns. */
+/** A persisted task row joined with the creator and assignee previews the API returns. */
 export interface TaskRow {
   readonly id: string;
   readonly boardId: string;
@@ -33,7 +33,6 @@ export interface TaskRow {
   /** Prerequisites ordered by board sequence. */
   readonly dependsOn: readonly TaskReferenceRow[];
   readonly assignee: TaskPersonPreview | null;
-  readonly reporter: TaskPersonPreview;
   /** UTC midnight for the calendar day; formatted to `YYYY-MM-DD` by the service. */
   readonly dueDate: Date | null;
   readonly createdBy: TaskPersonPreview;
@@ -82,8 +81,7 @@ export interface TaskPage {
 
 /**
  * Fully-resolved task field values the repository writes: the service has already
- * resolved a create request's optional reporterId to a concrete user id (the caller,
- * unless another member was named) before calling the repository. Status is the full
+ * resolved request fields before calling the repository. Status is the full
  * enum because an update/move may archive or restore a task; create requests can
  * never carry ARCHIVED because `createTaskRequestSchema` restricts it upstream.
  */
@@ -102,7 +100,6 @@ export interface TaskWriteInput {
   readonly status: TaskStatus;
   readonly priority: TaskPriority;
   readonly assigneeId: string | null;
-  readonly reporterId: string;
   readonly dueDate: string | null;
   /** The complete prerequisite set; never contains the task's own id (the service rejects that). */
   readonly dependsOnIds: readonly string[];
@@ -113,7 +110,6 @@ export interface TaskWriteInput {
 /** Validation failures shared by create and update. */
 export type TaskWriteViolation =
   | { readonly kind: "ASSIGNEE_NOT_MEMBER" }
-  | { readonly kind: "REPORTER_NOT_MEMBER" }
   /** A dependency id is unknown, deleted, or belongs to another board. */
   | { readonly kind: "DEPENDENCY_NOT_FOUND" }
   /** Moving into IN_PROGRESS or COMPLETED requires every selected prerequisite to be settled. */

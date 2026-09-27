@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { expect, test } from "@playwright/test";
-import { card, column, createBoard, createTask, signUp } from "./support";
+import { PASSWORD, card, column, createBoard, createTask, signUp } from "./support";
 
 const SCREENSHOT_DIR = ".tmp/phase5a/screens";
 
@@ -261,4 +261,89 @@ test("signs up, creates a board and a task, then moves the task between columns"
   await confirm.getByRole("button", { name: "Delete task" }).click();
   await expect(page.getByText(`Deleted “${taskName}”.`)).toBeVisible();
   await expect(card(page, "Completed", taskName)).toHaveCount(0);
+});
+
+test("search narrows cards, keeps the filter in the URL on reload, and archive/restore works", async ({
+  page,
+}) => {
+  await signUp(page, "search");
+  await createBoard(page, `E2E Search Board ${Date.now()}`);
+
+  const keepName = `Curate the archive ${Date.now()}`;
+  const otherName = `Draft the newsletter ${Date.now()}`;
+  await createTask(page, keepName);
+  await createTask(page, otherName);
+
+  const searchBox = page.getByRole("searchbox", { name: "Search tasks" });
+  await searchBox.fill("Curate");
+  await expect(card(page, "Not Started", keepName)).toBeVisible();
+  await expect(card(page, "Not Started", otherName)).toHaveCount(0);
+  // The debounced search writes into the URL, so the filter survives a reload.
+  await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe("Curate");
+  await page.reload();
+  await expect(searchBox).toHaveValue("Curate");
+  await expect(card(page, "Not Started", keepName)).toBeVisible();
+  await expect(card(page, "Not Started", otherName)).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await expect(card(page, "Not Started", otherName)).toBeVisible();
+
+  // Archiving hides the task unless "Show archived" is toggled on; restoring brings
+  // it back to Not Started through the Status field (the keyboard-equivalent move).
+  await card(page, "Not Started", keepName).click();
+  const archiveDialog = page.getByRole("dialog");
+  await archiveDialog.getByRole("button", { name: "Archive task" }).click();
+  await expect(page.getByText(`Archived “${keepName}”.`)).toBeVisible();
+  await expect(page.getByRole("heading", { level: 3, name: keepName })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Show archived" }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get("archived")).toBe("1");
+  const archivedColumn = column(page, "Archived");
+  await expect(archivedColumn.getByRole("heading", { level: 3, name: keepName })).toBeVisible();
+
+  await archivedColumn.getByRole("heading", { level: 3, name: keepName }).click();
+  const restoreDialog = page.getByRole("dialog");
+  await restoreDialog.getByRole("combobox", { name: "Status" }).click();
+  await page.getByRole("option", { name: "Not Started" }).click();
+  await restoreDialog.getByRole("button", { name: /Save changes/ }).click();
+  await expect(page.getByText(`Restored “${keepName}” to Not Started.`)).toBeVisible();
+  await expect(restoreDialog).toBeHidden();
+  await expect(card(page, "Not Started", keepName)).toBeVisible();
+  await expect(archivedColumn.getByRole("heading", { level: 3, name: keepName })).toHaveCount(0);
+});
+
+test("uploads, opens, and removes a task attachment", async ({ page }) => {
+  await signUp(page, "attachments");
+  await createBoard(page, `E2E Attachments Board ${Date.now()}`);
+  const taskName = `Publish the runbook ${Date.now()}`;
+  await createTask(page, taskName);
+
+  await card(page, "Not Started", taskName).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Upload file").setInputFiles("e2e/fixtures/sample-attachment.txt");
+  const tile = dialog.getByText("sample-attachment.txt");
+  await expect(tile).toBeVisible();
+
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    dialog.getByRole("link", { name: "Open" }).click(),
+  ]);
+  await popup.close();
+
+  await dialog.getByRole("button", { name: "Remove sample-attachment.txt" }).click();
+  await expect(dialog.getByText("sample-attachment.txt")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Discard changes" }).click();
+});
+
+test("signs out and back in, landing on boards", async ({ page }) => {
+  const email = await signUp(page, "signout");
+  await page.getByRole("button", { name: /Account menu for/ }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page).toHaveURL(/\/login(\?|$)/);
+
+  await page.getByRole("radio", { name: "Log in" }).click();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.locator('button[type="submit"]').click();
+  await expect(page.getByRole("heading", { name: "Boards", level: 1 })).toBeVisible();
 });

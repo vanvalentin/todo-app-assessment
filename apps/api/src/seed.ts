@@ -87,7 +87,6 @@ export const demoTasks = [
     priority: "HIGH",
     creator: "ada@example.test",
     assignee: "grace@example.test",
-    reporter: "ada@example.test",
     dueDate: "2027-04-18",
     description:
       "Email the fair committee to confirm our **corner booth**.\n\n- Table size\n- Power outlet",
@@ -101,7 +100,6 @@ export const demoTasks = [
     priority: "MEDIUM",
     creator: "grace@example.test",
     assignee: "grace@example.test",
-    reporter: "grace@example.test",
     dueDate: "2027-04-25",
     description:
       "Pick twelve prints for the wall. See the [fair guide](https://example.test/fair-guide).",
@@ -115,7 +113,6 @@ export const demoTasks = [
     priority: "LOW",
     creator: "linus@example.test",
     assignee: null,
-    reporter: "linus@example.test",
     dueDate: null,
     description: null,
   },
@@ -128,7 +125,6 @@ export const demoTasks = [
     priority: "LOW",
     creator: "ada@example.test",
     assignee: null,
-    reporter: "ada@example.test",
     dueDate: null,
     description: null,
   },
@@ -141,7 +137,6 @@ export const demoTasks = [
     priority: "HIGH",
     creator: "grace@example.test",
     assignee: "ada@example.test",
-    reporter: "grace@example.test",
     dueDate: "2027-05-02",
     description: null,
   },
@@ -154,7 +149,6 @@ export const demoTasks = [
     priority: "MEDIUM",
     creator: "ada@example.test",
     assignee: "maya@example.test",
-    reporter: "ada@example.test",
     dueDate: null,
     description: "Summarize the frozen scope for the changelog.",
   },
@@ -167,7 +161,6 @@ export const demoTasks = [
     priority: "MEDIUM",
     creator: "maya@example.test",
     assignee: "maya@example.test",
-    reporter: "maya@example.test",
     dueDate: "2027-03-14",
     description: null,
   },
@@ -180,7 +173,6 @@ export const demoTasks = [
     priority: "LOW",
     creator: "maya@example.test",
     assignee: null,
-    reporter: "maya@example.test",
     dueDate: "2027-06-01",
     description: null,
   },
@@ -250,8 +242,6 @@ export async function seed(): Promise<void> {
     for (const task of demoTasks) {
       const creatorId = userIds.get(task.creator);
       if (!creatorId) throw new Error(`Missing demo task creator: ${task.creator}`);
-      const reporterId = userIds.get(task.reporter);
-      if (!reporterId) throw new Error(`Missing demo task reporter: ${task.reporter}`);
       const assigneeId = task.assignee === null ? null : (userIds.get(task.assignee) ?? null);
       if (task.assignee !== null && assigneeId === null) {
         throw new Error(`Missing demo task assignee: ${task.assignee}`);
@@ -265,7 +255,6 @@ export async function seed(): Promise<void> {
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
-          reporterId,
           assigneeId,
           dueDate,
         },
@@ -278,7 +267,6 @@ export async function seed(): Promise<void> {
           status: task.status,
           priority: task.priority,
           createdById: creatorId,
-          reporterId,
           assigneeId,
           dueDate,
         },

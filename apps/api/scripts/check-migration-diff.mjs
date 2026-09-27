@@ -53,11 +53,10 @@ const unsupportedRawSql = [
   /^DROP INDEX "board_invitation_pending_board_email_key";$/,
   /^ALTER TABLE "board" DROP CONSTRAINT "board_name_not_empty";$/,
   /^ALTER TABLE "task" DROP CONSTRAINT "task_name_not_empty";$/,
-  // Composite FKs enforcing "assignee/reporter is a member of this task's own board";
+  // Composite FK enforcing "assignee is a member of this task's own board";
   // Prisma cannot express a composite relation through a required local column
-  // (task.boardId), so these exist only in the committed migration (phase 4b).
+  // (task.boardId), so this exists only in the committed migration (phase 4b).
   /^ALTER TABLE "task" DROP CONSTRAINT "task_assignee_board_membership_fkey";$/,
-  /^ALTER TABLE "task" DROP CONSTRAINT "task_reporter_board_membership_fkey";$/,
   // pg_trgm-backed search index (phase 4c); no postgresqlExtensions preview is
   // enabled, so both the extension and the index are raw SQL only.
   /^DROP INDEX "task_name_trgm_idx";$/,

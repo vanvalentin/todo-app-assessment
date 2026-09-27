@@ -12,8 +12,8 @@ export interface BoardMemberOption extends UserPreview {
 }
 
 /**
- * Loads every board member for the assignee/reporter pickers, paging automatically
- * up to a bound. A person already set on the task (assignee or reporter) is always
+ * Loads every board member for the assignee picker, paging automatically up to a
+ * bound. A person already set on the task (assignee) is always
  * shown even if a later page has not loaded yet, so the pill never goes blank.
  */
 export function useBoardMembers(boardId: string, enabled = true) {

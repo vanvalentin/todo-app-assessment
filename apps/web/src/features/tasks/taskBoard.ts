@@ -211,9 +211,6 @@ export function taskMutationErrorMessage(error: unknown): string {
     if (error.code === "TASK_ASSIGNEE_NOT_MEMBER") {
       return "That assignee is no longer a member of this board.";
     }
-    if (error.code === "TASK_REPORTER_NOT_MEMBER") {
-      return "That reporter is no longer a member of this board.";
-    }
     const dependencyMessage = dependencyErrorMessage(error.code);
     if (dependencyMessage !== null) return dependencyMessage;
     if (error.status === 403) return "You don’t have permission to change tasks on this board.";

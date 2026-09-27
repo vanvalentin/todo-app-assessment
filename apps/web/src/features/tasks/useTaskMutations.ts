@@ -30,7 +30,6 @@ export interface TaskEditValues {
   readonly priority: TaskPriority;
   /** The full preview, not just an id, so the optimistic cache can render it immediately. */
   readonly assignee: UserPreview | null;
-  readonly reporter: UserPreview;
   readonly dueDate: string | null;
   /** Markdown source; null clears the description. */
   readonly description: string | null;
@@ -141,7 +140,6 @@ export function useTaskMutations(boardId: string) {
       status,
       priority,
       assignee,
-      reporter,
       dueDate,
       description,
       dependsOn,
@@ -152,7 +150,6 @@ export function useTaskMutations(boardId: string) {
         status,
         priority,
         assigneeId: assignee?.id ?? null,
-        reporterId: reporter.id,
         dueDate,
         description,
         dependsOnIds: dependsOn.map((reference) => reference.id),
@@ -170,7 +167,6 @@ export function useTaskMutations(boardId: string) {
         status: values.status,
         priority: values.priority,
         assignee: values.assignee,
-        reporter: values.reporter,
         dueDate: values.dueDate,
         description: values.description,
         dependsOn: [...values.dependsOn],

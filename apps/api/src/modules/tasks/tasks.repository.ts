@@ -18,7 +18,6 @@ const personPreview = { id: true, name: true, avatarSeed: true } as const;
 const withPeople = {
   createdBy: { select: personPreview },
   assignee: { select: personPreview },
-  reporter: { select: personPreview },
   dependencies: {
     select: { dependsOn: { select: { id: true, sequence: true, name: true, status: true } } },
     orderBy: { dependsOn: { sequence: "asc" } },
@@ -70,7 +69,6 @@ interface TaskWithPeople {
     readonly name: string;
     readonly avatarSeed: string;
   } | null;
-  readonly reporter: { readonly id: string; readonly name: string; readonly avatarSeed: string };
   readonly schedule: {
     readonly id: string;
     readonly rrule: string;
@@ -98,7 +96,6 @@ function toTaskRow(row: TaskWithPeople): TaskRow {
     priority: row.priority,
     dependsOn: row.dependencies.map((edge) => edge.dependsOn),
     assignee: row.assignee,
-    reporter: row.reporter,
     dueDate: row.dueDate,
     createdBy: row.createdBy,
     version: row.version,
@@ -256,14 +253,13 @@ async function retryOnWriteConflict<T>(operation: () => Promise<T>): Promise<T> 
 
 /**
  * Defense in depth against the same-transaction membership check racing a concurrent
- * write: the composite foreign keys (task_assignee_board_membership_fkey,
- * task_reporter_board_membership_fkey) are the real backstop, so a foreign-key
+ * write: the composite assignee foreign key is the real backstop, so a foreign-key
  * violation on one of them is mapped to the same result the pre-check would have
  * returned, never a raw 500.
  */
 function membershipViolationKind(
   error: unknown,
-): "ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | "DEPENDENCY_NOT_FOUND" | null {
+): "ASSIGNEE_NOT_MEMBER" | "DEPENDENCY_NOT_FOUND" | null {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2003") {
     return null;
   }
@@ -274,7 +270,6 @@ function membershipViolationKind(
     return "DEPENDENCY_NOT_FOUND";
   }
   if (constraint.includes("assignee")) return "ASSIGNEE_NOT_MEMBER";
-  if (constraint.includes("reporter")) return "REPORTER_NOT_MEMBER";
   return null;
 }
 
@@ -284,7 +279,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     tx: Prisma.TransactionClient,
     boardId: string,
     input: TaskWriteInput,
-  ): Promise<"ASSIGNEE_NOT_MEMBER" | "REPORTER_NOT_MEMBER" | null> {
+  ): Promise<"ASSIGNEE_NOT_MEMBER" | null> {
     if (input.assigneeId !== null) {
       const assignee = await tx.boardMembership.findUnique({
         where: { boardId_userId: { boardId, userId: input.assigneeId } },
@@ -292,11 +287,6 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       });
       if (!assignee) return "ASSIGNEE_NOT_MEMBER";
     }
-    const reporter = await tx.boardMembership.findUnique({
-      where: { boardId_userId: { boardId, userId: input.reporterId } },
-      select: { userId: true },
-    });
-    if (!reporter) return "REPORTER_NOT_MEMBER";
     return null;
   }
 
@@ -434,7 +424,6 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 status: input.status,
                 priority: input.priority,
                 assigneeId: input.assigneeId,
-                reporterId: input.reporterId,
                 dueDate: dueDateToColumn(input.dueDate),
                 createdById: userId,
               },
@@ -539,7 +528,6 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
                 status: input.status,
                 priority: input.priority,
                 assigneeId: input.assigneeId,
-                reporterId: input.reporterId,
                 dueDate: dueDateToColumn(input.dueDate),
                 version: { increment: 1 },
               },

@@ -86,7 +86,6 @@ export async function generateOccurrence(prisma: PrismaClient, job: RecurrenceJo
           status: "NOT_STARTED",
           priority: schedule.task.priority,
           assigneeId: schedule.task.assigneeId,
-          reporterId: schedule.task.reporterId,
           dueDate: dateForOccurrence(scheduledAt, schedule.timezone),
           createdById: schedule.task.createdById,
         },

@@ -183,43 +183,6 @@ export function AssigneePill({ value, members, onChange, invalid, disabled }: As
   );
 }
 
-interface ReporterPillProps {
-  readonly value: UserPreview;
-  readonly members: readonly BoardMemberOption[];
-  readonly onChange: (member: UserPreview) => void;
-  readonly invalid?: boolean;
-  readonly disabled?: boolean;
-}
-
-/** Reporter always has a value: any active board member may set any active member. */
-export function ReporterPill({ value, members, onChange, invalid, disabled }: ReporterPillProps) {
-  return (
-    <Select.Root
-      value={value.id}
-      onValueChange={(next) => {
-        const member = members.find((candidate) => candidate.id === next);
-        if (member) onChange(member);
-      }}
-      disabled={disabled}
-    >
-      <PillTrigger label="Reporter" invalid={invalid}>
-        <Avatar seed={value.avatarSeed} name={value.name} size={16} decorative />
-        <Select.Value>Reporter: {value.name}</Select.Value>
-      </PillTrigger>
-      <SelectMenu heading="Reported by">
-        {members.map((member) => (
-          <MenuItem key={member.id} value={member.id}>
-            <Avatar seed={member.avatarSeed} name={member.name} size={16} decorative />
-            <Select.ItemText>
-              {member.name} ({roleLabel(member.role)})
-            </Select.ItemText>
-          </MenuItem>
-        ))}
-      </SelectMenu>
-    </Select.Root>
-  );
-}
-
 function roleLabel(role: "ADMIN" | "MANAGER" | "CONTRIBUTOR"): string {
   if (role === "ADMIN") return "Admin";
   if (role === "MANAGER") return "Manager";

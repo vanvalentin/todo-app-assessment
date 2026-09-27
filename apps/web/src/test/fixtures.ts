@@ -85,7 +85,6 @@ export function buildTask(overrides: Partial<Task> = {}): Task {
     priority: "MEDIUM",
     dependsOn: [],
     assignee: null,
-    reporter: { id: USER_IDS.ada, name: "Ada Lovelace", avatarSeed: "ada-seed" },
     dueDate: null,
     createdBy: { id: USER_IDS.ada, name: "Ada Lovelace", avatarSeed: "ada-seed" },
     version: 1,
