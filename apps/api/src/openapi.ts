@@ -19,7 +19,9 @@ import {
   createTaskRequestSchema,
   deleteTaskQuerySchema,
   invitationPreviewSchema,
+  livenessResponseSchema,
   paginationQuerySchema,
+  readinessResponseSchema,
   pendingInvitationListResponseSchema,
   problemDetailsSchema,
   taskListQuerySchema,
@@ -53,6 +55,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.register("InvitationPreview", invitationPreviewSchema);
   registry.register("AcceptInvitationResponse", acceptInvitationResponseSchema);
   registry.register("ProblemDetails", problemDetailsSchema);
+  registry.register("LivenessResponse", livenessResponseSchema);
+  registry.register("ReadinessResponse", readinessResponseSchema);
   registry.register("TaskPriority", taskPrioritySchema);
   registry.register("TaskReference", taskReferenceSchema);
   registry.register("Task", taskSchema);
@@ -67,8 +71,32 @@ export function buildOpenApiDocument(): OpenApiDocument {
     name: "better-auth.session_token",
   });
   registry.registerPath({
+    method: "get",
+    path: "/health/live",
+    tags: ["Health"],
+    responses: {
+      200: { description: "The API process is alive.", ...json(livenessResponseSchema) },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/health/ready",
+    tags: ["Health"],
+    responses: {
+      200: {
+        description: "All required dependencies are ready.",
+        ...json(readinessResponseSchema),
+      },
+      503: {
+        description: "At least one required dependency is unavailable.",
+        ...json(readinessResponseSchema),
+      },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/api/v1/boards",
+    tags: ["Boards"],
     security: [{ cookieAuth: [] }],
     request: {
       body: {
@@ -90,6 +118,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/boards",
+    tags: ["Boards"],
     security: [{ cookieAuth: [] }],
     request: { query: paginationQuerySchema },
     responses: {
@@ -103,17 +132,20 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/boards/{boardId}",
+    tags: ["Boards"],
     security: [{ cookieAuth: [] }],
     request: { params: boardParamSchema },
     responses: {
       200: { description: "Board detail.", ...json(boardDetailSchema) },
       400: { description: "Malformed board id.", ...problem },
+      401: { description: "Unauthenticated.", ...problem },
       404: { description: "Board is unknown or not a member.", ...problem },
     },
   });
   registry.registerPath({
     method: "patch",
     path: "/api/v1/boards/{boardId}",
+    tags: ["Boards"],
     security: [{ cookieAuth: [] }],
     request: {
       params: boardParamSchema,
@@ -134,6 +166,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/boards/{boardId}/members",
+    tags: ["Members"],
     security: [{ cookieAuth: [] }],
     request: { params: boardParamSchema, query: paginationQuerySchema },
     responses: {
@@ -145,10 +178,13 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/boards/{boardId}/invitations",
+    tags: ["Invitations"],
     security: [{ cookieAuth: [] }],
     request: { params: boardParamSchema, query: paginationQuerySchema },
     responses: {
       200: { description: "Pending invitations.", ...json(pendingInvitationListResponseSchema) },
+      400: { description: "Invalid pagination cursor.", ...problem },
+      401: { description: "Unauthenticated.", ...problem },
       403: { description: "Manager or admin role required.", ...problem },
       404: { description: "Board is unknown or not a member.", ...problem },
     },
@@ -156,6 +192,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/v1/boards/{boardId}/invitations",
+    tags: ["Invitations"],
     security: [{ cookieAuth: [] }],
     request: {
       params: boardParamSchema,
@@ -170,13 +207,20 @@ export function buildOpenApiDocument(): OpenApiDocument {
         ...json(createInvitationResponseSchema),
       },
       400: { description: "Invalid request.", ...problem },
-      403: { description: "Insufficient role or untrusted origin.", ...problem },
+      401: { description: "Unauthenticated.", ...problem },
+      403: {
+        description: "Insufficient role, untrusted origin, or a non-admin inviting an admin.",
+        ...problem,
+      },
+      404: { description: "Board is unknown or not a member.", ...problem },
       409: { description: "Already a member or concurrent invitation conflict.", ...problem },
+      429: { description: "Invitation creation rate limit exceeded.", ...problem },
     },
   });
   registry.registerPath({
     method: "delete",
     path: "/api/v1/boards/{boardId}/invitations/{invitationId}",
+    tags: ["Invitations"],
     security: [{ cookieAuth: [] }],
     request: {
       params: z.object({ boardId: z.string().uuid(), invitationId: z.string().uuid() }).strict(),
@@ -194,28 +238,36 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/invitations/{token}",
+    tags: ["Invitations"],
     request: { params: tokenParamSchema },
     responses: {
       200: { description: "Invitation preview.", ...json(invitationPreviewSchema) },
+      400: { description: "Malformed invitation token.", ...problem },
       404: { description: "Invitation not found.", ...problem },
       410: { description: "Invitation expired or unavailable.", ...problem },
+      429: { description: "Invitation lookup rate limit exceeded.", ...problem },
     },
   });
   registry.registerPath({
     method: "post",
     path: "/api/v1/invitations/{token}/accept",
+    tags: ["Invitations"],
     security: [{ cookieAuth: [] }],
     request: { params: tokenParamSchema },
     responses: {
       200: { description: "Invitation accepted.", ...json(acceptInvitationResponseSchema) },
+      400: { description: "Malformed invitation token.", ...problem },
       401: { description: "Unauthenticated.", ...problem },
-      403: { description: "Signed-in email does not match.", ...problem },
+      403: { description: "Signed-in email does not match, or untrusted origin.", ...problem },
+      404: { description: "Invitation not found.", ...problem },
       410: { description: "Invitation expired or unavailable.", ...problem },
+      429: { description: "Invitation acceptance rate limit exceeded.", ...problem },
     },
   });
   registry.registerPath({
     method: "get",
     path: "/api/v1/boards/{boardId}/tasks",
+    tags: ["Tasks"],
     security: [{ cookieAuth: [] }],
     request: { params: boardParamSchema, query: taskListQuerySchema },
     responses: {
@@ -236,6 +288,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/v1/boards/{boardId}/tasks",
+    tags: ["Tasks"],
     security: [{ cookieAuth: [] }],
     request: {
       params: boardParamSchema,
@@ -252,7 +305,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       404: { description: "Board is unknown or not a member.", ...problem },
       422: {
         description:
-          "Assignee or reporter is not an active board member (TASK_ASSIGNEE_NOT_MEMBER, TASK_REPORTER_NOT_MEMBER), a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), or the task starts In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
+          "Assignee is not an active board member (TASK_ASSIGNEE_NOT_MEMBER), a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), or the task starts In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
         ...problem,
       },
       429: { description: "Task creation rate limit exceeded.", ...problem },
@@ -261,6 +314,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/tasks/{taskId}",
+    tags: ["Tasks"],
     security: [{ cookieAuth: [] }],
     request: { params: taskParamSchema },
     responses: {
@@ -273,6 +327,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "patch",
     path: "/api/v1/tasks/{taskId}",
+    tags: ["Tasks"],
     security: [{ cookieAuth: [] }],
     request: {
       params: taskParamSchema,
@@ -294,7 +349,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
       409: { description: "Task version is stale.", ...problem },
       422: {
         description:
-          "Assignee or reporter is not an active board member, a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), names the task itself (TASK_DEPENDENCY_SELF), would create a cycle (TASK_DEPENDENCY_CYCLE), or the task moves into In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
+          "Assignee is not an active board member, a dependency is not a task on this board (TASK_DEPENDENCY_NOT_FOUND), names the task itself (TASK_DEPENDENCY_SELF), would create a cycle (TASK_DEPENDENCY_CYCLE), or the task moves into In Progress or Completed while a dependency is still Not Started or In Progress (TASK_DEPENDENCIES_INCOMPLETE).",
         ...problem,
       },
       429: { description: "Task update rate limit exceeded.", ...problem },
@@ -303,6 +358,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "delete",
     path: "/api/v1/tasks/{taskId}",
+    tags: ["Tasks"],
     security: [{ cookieAuth: [] }],
     request: { params: taskParamSchema, query: deleteTaskQuerySchema },
     responses: {
@@ -318,6 +374,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "get",
     path: "/api/v1/tasks/{taskId}/attachments",
+    tags: ["Attachments"],
     security: [{ cookieAuth: [] }],
     request: { params: taskParamSchema, query: attachmentListQuerySchema },
     responses: {
@@ -329,6 +386,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "post",
     path: "/api/v1/tasks/{taskId}/attachments",
+    tags: ["Attachments"],
     security: [{ cookieAuth: [] }],
     request: {
       params: taskParamSchema,
@@ -345,14 +403,21 @@ export function buildOpenApiDocument(): OpenApiDocument {
       201: { description: "Uploaded attachment.", ...json(attachmentSchema) },
       400: { description: "Missing file.", ...problem },
       401: { description: "Unauthenticated.", ...problem },
+      403: { description: "Trusted origin required.", ...problem },
       404: { description: "Task is unknown or inaccessible.", ...problem },
-      413: { description: "Attachment size limit exceeded.", ...problem },
+      413: {
+        description: "Per-file or per-task attachment size limit exceeded.",
+        ...problem,
+      },
       415: { description: "Unsupported file type.", ...problem },
+      422: { description: "File name or content is invalid or empty.", ...problem },
+      429: { description: "Attachment upload rate limit exceeded.", ...problem },
     },
   });
   registry.registerPath({
     method: "get",
     path: "/api/v1/tasks/{taskId}/attachments/{attachmentId}/content",
+    tags: ["Attachments"],
     security: [{ cookieAuth: [] }],
     request: {
       params: z.object({ taskId: z.string().uuid(), attachmentId: z.string().uuid() }).strict(),
@@ -371,6 +436,7 @@ export function buildOpenApiDocument(): OpenApiDocument {
   registry.registerPath({
     method: "delete",
     path: "/api/v1/tasks/{taskId}/attachments/{attachmentId}",
+    tags: ["Attachments"],
     security: [{ cookieAuth: [] }],
     request: {
       params: z.object({ taskId: z.string().uuid(), attachmentId: z.string().uuid() }).strict(),
@@ -378,12 +444,22 @@ export function buildOpenApiDocument(): OpenApiDocument {
     responses: {
       204: { description: "Attachment deleted." },
       401: { description: "Unauthenticated.", ...problem },
+      403: { description: "Trusted origin required.", ...problem },
       404: { description: "Attachment is unknown or inaccessible.", ...problem },
+      429: { description: "Attachment deletion rate limit exceeded.", ...problem },
     },
   });
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
     openapi: "3.1.0",
+    tags: [
+      { name: "Health", description: "Service health endpoints." },
+      { name: "Boards", description: "Board resources." },
+      { name: "Members", description: "Board membership resources." },
+      { name: "Invitations", description: "Invitation resources." },
+      { name: "Tasks", description: "Task resources." },
+      { name: "Attachments", description: "Task attachment resources." },
+    ],
     info: {
       title: "Ksat application API",
       version: "0.1.0",
