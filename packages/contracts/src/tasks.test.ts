@@ -4,6 +4,8 @@ import {
   activeTaskStatusSchema,
   createTaskRequestSchema,
   deleteTaskQuerySchema,
+  TASK_DEPENDENCIES_MAX,
+  TASK_DESCRIPTION_MAX_LENGTH,
   taskDueFilterSchema,
   taskListQuerySchema,
   taskListResponseSchema,
@@ -26,8 +28,17 @@ const validTask = {
   boardId: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f2f",
   sequence: 12,
   name: "Curate photo prints",
+  description: "Pick **twelve** prints.",
   status: "NOT_STARTED",
   priority: "HIGH",
+  dependsOn: [
+    {
+      id: "018f7f2e-3b8a-7c3a-8f2e-3b8a7c3a8f40",
+      sequence: 3,
+      name: "Buy paper",
+      status: "COMPLETED",
+    },
+  ],
   assignee,
   reporter,
   dueDate: "2027-04-18",
@@ -80,6 +91,8 @@ describe("task contracts", () => {
       priority: "MEDIUM",
       assigneeId: null,
       dueDate: null,
+      description: null,
+      dependsOnIds: [],
     });
     expect(createTaskRequestSchema.safeParse({ name: "" }).success).toBe(false);
     expect(createTaskRequestSchema.safeParse({ name: "x".repeat(161) }).success).toBe(false);
@@ -114,6 +127,8 @@ describe("task contracts", () => {
         assigneeId: null,
         reporterId: reporter.id,
         dueDate: null,
+        description: null,
+        dependsOnIds: [],
         version: 1,
       }).success,
     ).toBe(true);
@@ -125,6 +140,8 @@ describe("task contracts", () => {
         assigneeId: null,
         reporterId: reporter.id,
         dueDate: null,
+        description: null,
+        dependsOnIds: [],
         version: 2,
       }).success,
     ).toBe(true);
@@ -139,6 +156,8 @@ describe("task contracts", () => {
         assigneeId: assignee.id,
         reporterId: reporter.id,
         dueDate: "2027-04-18",
+        description: "  - keep indentation\n",
+        dependsOnIds: [validTask.dependsOn[0]?.id],
         version: 4,
       }),
     ).toEqual({
@@ -148,6 +167,8 @@ describe("task contracts", () => {
       assigneeId: assignee.id,
       reporterId: reporter.id,
       dueDate: "2027-04-18",
+      description: "  - keep indentation\n",
+      dependsOnIds: [validTask.dependsOn[0]?.id],
       version: 4,
     });
     expect(
@@ -163,6 +184,29 @@ describe("task contracts", () => {
     expect(deleteTaskQuerySchema.safeParse({}).success).toBe(false);
     expect(deleteTaskQuerySchema.safeParse({ version: "stale" }).success).toBe(false);
     expect(deleteTaskQuerySchema.safeParse({ version: 1, force: true }).success).toBe(false);
+  });
+
+  it("keeps Markdown verbatim, normalizes a blank description to null, and caps its length", () => {
+    const parse = (description: unknown) =>
+      createTaskRequestSchema.safeParse({ name: "Task", description });
+    expect(parse("   \n\t ")).toMatchObject({ success: true, data: { description: null } });
+    expect(parse("x".repeat(TASK_DESCRIPTION_MAX_LENGTH))).toMatchObject({ success: true });
+    expect(parse("x".repeat(TASK_DESCRIPTION_MAX_LENGTH + 1)).success).toBe(false);
+    expect(taskSchema.safeParse({ ...validTask, description: "" }).success).toBe(false);
+  });
+
+  it("bounds dependency ids and rejects duplicates or malformed ids", () => {
+    const ids = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `018f7f2e-3b8a-7c3a-8f2e-${String(index).padStart(12, "0")}`,
+      );
+    const parse = (dependsOnIds: unknown) =>
+      createTaskRequestSchema.safeParse({ name: "Task", dependsOnIds });
+    expect(parse(ids(TASK_DEPENDENCIES_MAX)).success).toBe(true);
+    expect(parse(ids(TASK_DEPENDENCIES_MAX + 1)).success).toBe(false);
+    expect(parse([...ids(1), ...ids(1)]).success).toBe(false);
+    expect(parse(["not-a-uuid"]).success).toBe(false);
   });
 
   it("parses a paginated task list response", () => {

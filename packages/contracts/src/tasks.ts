@@ -22,15 +22,46 @@ export const taskDueFilterSchema = z.enum(["OVERDUE", "TODAY", "NEXT_7_DAYS", "N
 export type TaskDueFilter = z.infer<typeof taskDueFilterSchema>;
 
 export const TASK_NAME_MAX_LENGTH = 160;
+/** Markdown source length cap, counted in UTF-16 code units like the database CHECK. */
+export const TASK_DESCRIPTION_MAX_LENGTH = 10_000;
+/** A task may name at most this many prerequisite tasks. */
+export const TASK_DEPENDENCIES_MAX = 20;
 
 const taskNameSchema = z.string().trim().min(1).max(TASK_NAME_MAX_LENGTH);
 const versionSchema = z.number().int().nonnegative();
 
 /**
- * A task as returned by the API. Description, dependencies, attachments, and
- * schedules are later-phase fields and are deliberately absent rather than
- * returned as placeholder data. Assignee, reporter, and due date arrive in
- * phase 4b.
+ * Markdown description input. The source is kept verbatim (whitespace is meaningful
+ * in Markdown), except that an empty or whitespace-only value is normalized to null.
+ */
+const taskDescriptionInputSchema = z
+  .string()
+  .max(TASK_DESCRIPTION_MAX_LENGTH)
+  .transform((value) => (value.trim() === "" ? null : value))
+  .nullable();
+
+/** Prerequisite task ids: bounded and duplicate-free, so each edge is stated once. */
+const dependsOnIdsSchema = z
+  .array(uuidSchema)
+  .max(TASK_DEPENDENCIES_MAX)
+  .refine((ids) => new Set(ids).size === ids.length, { message: "must not repeat a task" });
+
+/** A compact preview of a same-board task this task depends on. */
+export const taskReferenceSchema = z
+  .object({
+    id: uuidSchema,
+    sequence: z.number().int().positive(),
+    name: z.string().min(1).max(TASK_NAME_MAX_LENGTH),
+    status: taskStatusSchema,
+  })
+  .strict();
+export type TaskReference = z.infer<typeof taskReferenceSchema>;
+
+/**
+ * A task as returned by the API. Attachments and schedules are later-phase fields
+ * and are deliberately absent rather than returned as placeholder data. Assignee,
+ * reporter, and due date arrive in phase 4b; the Markdown description and
+ * same-board dependencies in phase 5a.
  */
 export const taskSchema = z
   .object({
@@ -38,8 +69,12 @@ export const taskSchema = z
     boardId: uuidSchema,
     sequence: z.number().int().positive(),
     name: z.string().min(1).max(TASK_NAME_MAX_LENGTH),
+    /** Raw Markdown source; clients render it without raw HTML. */
+    description: z.string().min(1).max(TASK_DESCRIPTION_MAX_LENGTH).nullable(),
     status: taskStatusSchema,
     priority: taskPrioritySchema,
+    /** Same-board prerequisites, ordered by board sequence. */
+    dependsOn: z.array(taskReferenceSchema).max(TASK_DEPENDENCIES_MAX),
     /** Optional: no board member is assigned by default. */
     assignee: userPreviewSchema.nullable(),
     /** Always set: defaults to the creator and can be reassigned to any active member. */
@@ -60,6 +95,7 @@ export type TaskListResponse = z.infer<typeof taskListResponseSchema>;
 export const createTaskRequestSchema = z
   .object({
     name: taskNameSchema,
+    description: taskDescriptionInputSchema.default(null),
     status: activeTaskStatusSchema.default("NOT_STARTED"),
     priority: taskPrioritySchema.default("MEDIUM"),
     /** Any active board member id, or null to leave the task unassigned. */
@@ -67,6 +103,8 @@ export const createTaskRequestSchema = z
     /** Omitted defaults to the caller; any active board member may be named instead. */
     reporterId: uuidSchema.optional(),
     dueDate: isoDateSchema.nullable().default(null),
+    /** Ids of other tasks on the same board that this task depends on. */
+    dependsOnIds: dependsOnIdsSchema.default([]),
   })
   .strict();
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
@@ -80,15 +118,19 @@ export type CreateTaskRequestInput = z.input<typeof createTaskRequestSchema>;
 export const updateTaskRequestSchema = z
   .object({
     name: taskNameSchema,
+    description: taskDescriptionInputSchema,
     status: taskStatusSchema,
     priority: taskPrioritySchema,
     assigneeId: uuidSchema.nullable(),
     reporterId: uuidSchema,
     dueDate: isoDateSchema.nullable(),
+    /** Replaces the full prerequisite set; an empty array clears it. */
+    dependsOnIds: dependsOnIdsSchema,
     version: versionSchema,
   })
   .strict();
 export type UpdateTaskRequest = z.infer<typeof updateTaskRequestSchema>;
+export type UpdateTaskRequestInput = z.input<typeof updateTaskRequestSchema>;
 
 /** Deletion carries the expected version so a stale removal cannot win. */
 export const deleteTaskQuerySchema = z
