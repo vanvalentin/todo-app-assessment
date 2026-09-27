@@ -115,6 +115,8 @@ describe("TaskModal", () => {
         assigneeId: USER_IDS.grace,
         reporterId: USER_IDS.ada,
         dueDate: "2027-04-18",
+        description: null,
+        dependsOnIds: [],
       }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
@@ -230,6 +232,216 @@ describe("TaskModal", () => {
     fireEvent.click(within(modal).getByRole("button", { name: "Discard changes" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole("button", { name: existing.name })).toHaveFocus());
+  });
+
+  it("creates a task with a Markdown description and a searched same-board dependency", async () => {
+    let posted: unknown = null;
+    const searches: string[] = [];
+    const prerequisite = buildTask({
+      id: "01900000-0000-7000-8000-000000000503",
+      sequence: 7,
+      name: "Buy washi paper",
+      status: "ARCHIVED",
+    });
+    server.use(
+      http.get(TASKS_PATH, ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get("sort") === "NAME") {
+          searches.push(
+            `${url.searchParams.get("q") ?? ""}|${url.searchParams.get("includeArchived")}`,
+          );
+          const q = url.searchParams.get("q");
+          const items = q === "washi" ? [prerequisite] : [existing];
+          return HttpResponse.json({ items, nextCursor: null });
+        }
+        return HttpResponse.json({ items: [existing], nextCursor: null });
+      }),
+      http.post(TASKS_PATH, async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json(buildTask({ id: crypto.randomUUID() }), { status: 201 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderBoard();
+    const { modal } = await openCreateModal();
+    const createGuidance = within(modal).getByText(
+      "Every dependency must be Completed before this task can move to In Progress or Completed. Archived dependencies don’t block it.",
+    );
+    expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
+      "aria-describedby",
+      createGuidance.id,
+    );
+    fireEvent.change(within(modal).getByLabelText("Task name"), {
+      target: { value: "Frame prints" },
+    });
+    const description = within(modal).getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Description",
+    });
+    fireEvent.change(description, { target: { value: "## Plan\n\nFrame six prints" } });
+    description.setSelectionRange(9, 14);
+    await user.click(within(modal).getByRole("button", { name: "Bold" }));
+    expect(description).toHaveValue("## Plan\n\n**Frame** six prints");
+    expect(within(modal).queryByRole("button", { name: "Write" })).not.toBeInTheDocument();
+    await user.click(within(modal).getByRole("button", { name: "Preview" }));
+    expect(within(modal).getByRole("heading", { name: "Plan" })).toBeInTheDocument();
+
+    await user.click(within(modal).getByRole("button", { name: "Add dependency" }));
+    await user.type(await screen.findByLabelText("Search tasks on this board"), "washi");
+    await user.click(await screen.findByRole("checkbox", { name: /#7 Buy washi paper/ }));
+    await user.keyboard("{Escape}");
+    const chip = within(modal)
+      .getByRole("button", { name: "Remove dependency #7 Buy washi paper" })
+      .closest("li");
+    expect(chip).not.toBeNull();
+    // An archived prerequisite is called out in words, not only by colour.
+    expect(chip).toHaveTextContent("Archived");
+    expect(searches).toContain("washi|true");
+
+    fireEvent.click(within(modal).getByRole("button", { name: "Create task" }));
+    await waitFor(() =>
+      expect(posted).toMatchObject({
+        name: "Frame prints",
+        description: "## Plan\n\n**Frame** six prints",
+        dependsOnIds: [prerequisite.id],
+      }),
+    );
+  });
+
+  it("renders a saved description safely and toggles back to the editor", async () => {
+    const described = buildTask({
+      ...existing,
+      description:
+        'See [guide](https://example.test/guide) <img src="x" onerror="alert(1)"> **now**',
+    });
+    server.use(
+      http.get(TASKS_PATH, () => HttpResponse.json({ items: [described], nextCursor: null })),
+    );
+    const user = userEvent.setup();
+    renderBoard();
+    await screen.findByText(described.name);
+    const modal = await openTaskModal(described.name);
+    const editGuidance = within(modal).getByText(
+      "Every dependency must be Completed before this task can move to In Progress or Completed. Archived dependencies don’t block it.",
+    );
+    expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
+      "aria-describedby",
+      editGuidance.id,
+    );
+
+    const previewToggle = within(modal).getByRole("button", { name: "Preview" });
+    expect(previewToggle).toHaveAttribute("aria-pressed", "true");
+    const preview = within(modal).getByRole("region", { name: "Description preview" });
+    expect(within(preview).getByRole("link", { name: "guide" })).toHaveAttribute(
+      "rel",
+      "noopener noreferrer nofollow",
+    );
+    expect(preview.querySelector("img")).toBeNull();
+    expect(within(preview).getByText("now").tagName).toBe("STRONG");
+
+    await user.click(previewToggle);
+    expect(previewToggle).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() =>
+      expect(within(modal).getByRole("textbox", { name: "Description" })).toHaveFocus(),
+    );
+    expect(within(modal).getByRole("textbox", { name: "Description" })).toHaveValue(
+      described.description,
+    );
+  });
+
+  it("keeps the modal open and explains an incomplete dependency status block", async () => {
+    let patched: unknown = null;
+    const prerequisite = {
+      id: "01900000-0000-7000-8000-000000000505",
+      sequence: 5,
+      name: "Approve proofs",
+      status: "NOT_STARTED" as const,
+    };
+    const dependent = buildTask({ ...existing, status: "NOT_STARTED", dependsOn: [prerequisite] });
+    server.use(
+      http.get(TASKS_PATH, () => HttpResponse.json({ items: [dependent], nextCursor: null })),
+      http.patch(TASK_PATTERN, async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json(
+          {
+            type: "about:blank",
+            title: "TASK DEPENDENCIES INCOMPLETE",
+            status: 422,
+            detail: "Complete all dependencies before moving this task to In Progress.",
+            instance: TASK_PATTERN,
+            code: "TASK_DEPENDENCIES_INCOMPLETE",
+            requestId: "test",
+          },
+          { status: 422, headers: { "content-type": "application/problem+json" } },
+        );
+      }),
+    );
+    renderBoard();
+    await screen.findByText(dependent.name);
+    const modal = await openTaskModal(dependent.name);
+    await choosePill(modal, "Status", "In Progress");
+    fireEvent.click(within(modal).getByRole("button", { name: /Save changes/ }));
+
+    await waitFor(() => expect(patched).toMatchObject({ status: "IN_PROGRESS" }));
+    expect(
+      await within(modal).findAllByText(
+        "Complete all dependencies before moving this task to In Progress or Completed.",
+      ),
+    ).not.toHaveLength(0);
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(
+      within(modal).getByRole("button", { name: "Remove dependency #5 Approve proofs" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a dependency cycle on the field and keeps the chosen dependency for correction", async () => {
+    let patched: unknown = null;
+    const prerequisite = {
+      id: "01900000-0000-7000-8000-000000000504",
+      sequence: 4,
+      name: "Print proofs",
+      status: "IN_PROGRESS" as const,
+    };
+    const dependent = buildTask({ ...existing, dependsOn: [prerequisite] });
+    server.use(
+      http.get(TASKS_PATH, () => HttpResponse.json({ items: [dependent], nextCursor: null })),
+      http.patch(TASK_PATTERN, async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json(
+          {
+            type: "about:blank",
+            title: "TASK DEPENDENCY CYCLE",
+            status: 422,
+            detail: "That dependency would create a cycle.",
+            instance: TASK_PATTERN,
+            code: "TASK_DEPENDENCY_CYCLE",
+            requestId: "test",
+          },
+          { status: 422, headers: { "content-type": "application/problem+json" } },
+        );
+      }),
+    );
+    renderBoard();
+    await screen.findByText(dependent.name);
+    const modal = await openTaskModal(dependent.name);
+    fireEvent.click(within(modal).getByRole("button", { name: /Save changes/ }));
+
+    await waitFor(() => expect(patched).toMatchObject({ dependsOnIds: [prerequisite.id] }));
+    expect(await within(modal).findAllByText(/would create a loop/)).not.toHaveLength(0);
+    expect(within(modal).getByRole("button", { name: "Add dependency" })).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    fireEvent.click(
+      within(modal).getByRole("button", { name: "Remove dependency #4 Print proofs" }),
+    );
+    expect(within(modal).getByText("No dependencies.")).toBeInTheDocument();
+    expect(within(modal).getByRole("button", { name: "Add dependency" })).not.toHaveAttribute(
+      "aria-invalid",
+    );
   });
 
   it("hands edit-modal deletion to the confirmation dialog", async () => {

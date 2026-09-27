@@ -8,7 +8,7 @@ import {
   type TaskDueFilter,
   type TaskPriority,
   type TaskSort,
-  type UpdateTaskRequest,
+  type UpdateTaskRequestInput,
 } from "@ksat/contracts";
 import { apiRequest, apiRequestNoContent } from "./client";
 
@@ -70,7 +70,7 @@ export function fetchTask(taskId: string, signal?: AbortSignal) {
   return apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}`, taskSchema, { signal });
 }
 
-export function updateTask(taskId: string, input: UpdateTaskRequest) {
+export function updateTask(taskId: string, input: UpdateTaskRequestInput) {
   return apiRequest(`/api/v1/tasks/${encodeURIComponent(taskId)}`, taskSchema, {
     method: "PATCH",
     body: updateTaskRequestSchema.parse(input),

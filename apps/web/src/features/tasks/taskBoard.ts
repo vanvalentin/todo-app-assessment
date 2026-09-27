@@ -185,6 +185,21 @@ export function matchesTaskFilters(task: Task, filters: TaskBoardFilterState): b
   return true;
 }
 
+/** Field-level copy for the dependency 422s, or null for any other code. */
+export function dependencyErrorMessage(code: string | undefined): string | null {
+  if (code === "TASK_DEPENDENCY_CYCLE") {
+    return "That dependency would create a loop: the chosen task already depends on this one.";
+  }
+  if (code === "TASK_DEPENDENCY_SELF") return "A task can’t depend on itself.";
+  if (code === "TASK_DEPENDENCY_NOT_FOUND") {
+    return "One of the chosen dependencies is no longer on this board.";
+  }
+  if (code === "TASK_DEPENDENCIES_INCOMPLETE") {
+    return "Complete all dependencies before moving this task to In Progress or Completed.";
+  }
+  return null;
+}
+
 export function taskMutationErrorMessage(error: unknown): string {
   if (error instanceof NetworkError) {
     return "We couldn’t reach Ksat. Your change was not saved.";
@@ -199,6 +214,8 @@ export function taskMutationErrorMessage(error: unknown): string {
     if (error.code === "TASK_REPORTER_NOT_MEMBER") {
       return "That reporter is no longer a member of this board.";
     }
+    const dependencyMessage = dependencyErrorMessage(error.code);
+    if (dependencyMessage !== null) return dependencyMessage;
     if (error.status === 403) return "You don’t have permission to change tasks on this board.";
     if (error.status === 404) return "This task is no longer available to you.";
     if (error.status === 429) return "Too many changes at once. Please wait a moment and retry.";

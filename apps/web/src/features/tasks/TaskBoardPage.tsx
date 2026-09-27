@@ -169,6 +169,8 @@ export function TaskBoardPage() {
         assignee: task.assignee,
         reporter: task.reporter,
         dueDate: task.dueDate,
+        description: task.description,
+        dependsOn: task.dependsOn,
       });
       if (status === "ARCHIVED") {
         notify("success", `Archived \u201c${task.name}\u201d.`);

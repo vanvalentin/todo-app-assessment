@@ -11,6 +11,12 @@ export const queryKeys = {
     ["board", boardId, "tasks", filters] as const,
   /** The prefix shared by every filtered task-list cache entry for a board. */
   boardTasksAll: (boardId: string) => ["board", boardId, "tasks"] as const,
+  /**
+   * Tasks offered by the dependency picker. Deliberately outside the `boardTasksAll`
+   * prefix: those entries are infinite task-list pages that optimistic mutations rewrite.
+   */
+  dependencyCandidates: (boardId: string, q: string) =>
+    ["board", boardId, "dependency-candidates", q] as const,
   task: (taskId: string) => ["task", taskId] as const,
   invitation: (token: string) => ["invitation", token] as const,
 };

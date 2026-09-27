@@ -10,6 +10,7 @@ import type {
   Task,
   TaskListResponse,
   TaskPriority,
+  TaskReference,
   TaskStatus,
   UserPreview,
 } from "@ksat/contracts";
@@ -30,6 +31,10 @@ export interface TaskEditValues {
   readonly assignee: UserPreview | null;
   readonly reporter: UserPreview;
   readonly dueDate: string | null;
+  /** Markdown source; null clears the description. */
+  readonly description: string | null;
+  /** Full prerequisite previews, so the optimistic cache can render them immediately. */
+  readonly dependsOn: readonly TaskReference[];
 }
 
 interface Snapshot {
@@ -128,7 +133,17 @@ export function useTaskMutations(boardId: string) {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ task, name, status, priority, assignee, reporter, dueDate }: TaskEditValues) =>
+    mutationFn: ({
+      task,
+      name,
+      status,
+      priority,
+      assignee,
+      reporter,
+      dueDate,
+      description,
+      dependsOn,
+    }: TaskEditValues) =>
       updateTask(task.id, {
         name,
         status,
@@ -136,6 +151,8 @@ export function useTaskMutations(boardId: string) {
         assigneeId: assignee?.id ?? null,
         reporterId: reporter.id,
         dueDate,
+        description,
+        dependsOnIds: dependsOn.map((reference) => reference.id),
         version: task.version,
       }),
     onMutate: async (values: TaskEditValues): Promise<Snapshot> => {
@@ -148,6 +165,8 @@ export function useTaskMutations(boardId: string) {
         assignee: values.assignee,
         reporter: values.reporter,
         dueDate: values.dueDate,
+        description: values.description,
+        dependsOn: [...values.dependsOn],
       };
       return forEachTasksQuery(queryClient, boardId, (data, filters) =>
         reconcileTask(data, filters, updated),

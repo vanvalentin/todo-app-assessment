@@ -7,6 +7,7 @@ import {
   type CreateTaskRequestInput,
   type Task,
   type TaskPriority,
+  type TaskReference,
   type TaskStatus,
   type UserPreview,
 } from "@ksat/contracts";
@@ -26,7 +27,9 @@ import { ApiError } from "../../lib/api/client";
 import { fetchTask } from "../../lib/api/tasks";
 import type { TaskEditValues } from "./useTaskMutations";
 import { AssigneePill, DueDatePill, PriorityPill, ReporterPill, StatusPill } from "./PropertyPills";
-import { taskMutationErrorMessage } from "./taskBoard";
+import { DependencyPicker } from "./DependencyPicker";
+import { DescriptionField } from "./DescriptionField";
+import { dependencyErrorMessage, taskMutationErrorMessage } from "./taskBoard";
 import { useBoardMembers, withKnownPerson } from "./useBoardMembers";
 import styles from "./TaskModal.module.scss";
 
@@ -64,9 +67,9 @@ function formatUpdatedAt(iso: string): string {
 }
 
 /**
- * The designed create/edit modal (Figma `1:1045`, `1:479`). Description, tags,
- * dependencies, and attachments are later-phase content and are omitted rather than
- * rendered disabled, matching how phase 4a handled data that did not exist yet.
+ * The designed create/edit modal (Figma `1:1045`, `1:479`). Phase 5a adds the
+ * Markdown description and same-board dependencies; tags and attachments are still
+ * later-phase content and are omitted rather than rendered disabled.
  */
 export function TaskModal({
   boardId,
@@ -98,6 +101,11 @@ export function TaskModal({
   const [assignee, setAssignee] = useState<UserPreview | null>(task?.assignee ?? null);
   const [reporter, setReporter] = useState<UserPreview>(task?.reporter ?? currentUser);
   const [dueDate, setDueDate] = useState<string | null>(task?.dueDate ?? null);
+  const [description, setDescription] = useState<string>(task?.description ?? "");
+  const [dependsOn, setDependsOn] = useState<readonly TaskReference[]>(task?.dependsOn ?? []);
+  const [dependencyError, setDependencyError] = useState<string | null>(null);
+  // Remounts the description editor on reload so it re-derives its initial tab.
+  const [descriptionKey, setDescriptionKey] = useState(0);
 
   const { members } = useBoardMembers(boardId);
   const assigneeOptions = withKnownPerson(members, assignee);
@@ -124,6 +132,10 @@ export function TaskModal({
     setAssignee(latest.assignee);
     setReporter(latest.reporter);
     setDueDate(latest.dueDate);
+    setDescription(latest.description ?? "");
+    setDependsOn(latest.dependsOn);
+    setDescriptionKey((key) => key + 1);
+    setDependencyError(null);
     setAssigneeError(null);
     setReporterError(null);
     setIsDirty(false);
@@ -149,7 +161,10 @@ export function TaskModal({
     setSubmitError(null);
     setAssigneeError(null);
     setReporterError(null);
+    setDependencyError(null);
     setIsBusy(true);
+    // The contract normalizes blank Markdown to null; mirror it for the optimistic cache.
+    const descriptionValue = description.trim() === "" ? null : description;
     const effectiveStatus = statusOverride ?? status;
     try {
       if (isEditing && baselineTask) {
@@ -161,6 +176,8 @@ export function TaskModal({
           assignee,
           reporter,
           dueDate,
+          description: descriptionValue,
+          dependsOn,
         });
         onClose();
       } else {
@@ -173,9 +190,14 @@ export function TaskModal({
           assigneeId: assignee?.id ?? null,
           reporterId: reporter.id,
           dueDate,
+          description: descriptionValue,
+          dependsOnIds: dependsOn.map((reference) => reference.id),
         });
         if (createMore) {
+          // Create more keeps the shared properties but not per-task content.
           form.reset({ name: "" });
+          setDescription("");
+          setDescriptionKey((key) => key + 1);
           setIsDirty(false);
           nameInputRef.current?.focus();
         } else {
@@ -193,6 +215,7 @@ export function TaskModal({
         if (error.code === "TASK_REPORTER_NOT_MEMBER") {
           setReporterError("Choose an active board member as reporter.");
         }
+        setDependencyError(dependencyErrorMessage(error.code));
       }
       setSubmitError(taskMutationErrorMessage(error));
     } finally {
@@ -230,8 +253,8 @@ export function TaskModal({
           </Dialog.Title>
           <Dialog.Description className={styles.visuallyHiddenTitle} id={helpId}>
             {isEditing
-              ? "Edit the task's name, status, priority, assignee, reporter, and due date."
-              : "Create a task with a name, status, priority, assignee, reporter, and due date."}
+              ? "Edit the task's name, properties, Markdown description, and dependencies."
+              : "Create a task with a name, properties, Markdown description, and dependencies."}
           </Dialog.Description>
 
           <header className={styles.header}>
@@ -359,6 +382,30 @@ export function TaskModal({
                 {reporterError}
               </p>
             )}
+
+            <DescriptionField
+              key={descriptionKey}
+              value={description}
+              onChange={(next) => {
+                setDescription(next);
+                markDirty();
+              }}
+              disabled={isBusy}
+              initialMode={description.trim() === "" ? "write" : "preview"}
+            />
+
+            <DependencyPicker
+              boardId={boardId}
+              taskId={task?.id}
+              value={dependsOn}
+              onChange={(next) => {
+                setDependsOn(next);
+                setDependencyError(null);
+                markDirty();
+              }}
+              error={dependencyError}
+              disabled={isBusy}
+            />
 
             {submitError === null ? null : (
               <div className={styles.submitError} role="alert">

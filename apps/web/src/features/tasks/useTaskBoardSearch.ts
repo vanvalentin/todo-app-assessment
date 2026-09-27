@@ -81,12 +81,24 @@ export function useTaskBoardSearch(currentUserId: string | null): TaskBoardSearc
     );
   }
 
+  // react-router's functional setSearchParams updater receives the params captured at
+  // the render that created it, not the live URL. The debounce timer outlives that
+  // render, so it must call the latest updater: a stale one would silently revert any
+  // filter toggled while a search was still debouncing.
+  const latestRef = useRef({ updateParams, q });
+  useEffect(() => {
+    latestRef.current = { updateParams, q };
+  });
+
   // Debounce typing into the URL; keep the visible input responsive either way.
   useEffect(() => {
     if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
+      const next = searchInput.trim();
+      // Nothing to write (for example on mount): leave the URL and history untouched.
+      if (next === latestRef.current.q) return;
       skipNextSyncRef.current = true;
-      updateParams({ q: searchInput.trim() === "" ? null : searchInput.trim() }, true);
+      latestRef.current.updateParams({ q: next === "" ? null : next }, true);
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       if (debounceRef.current !== null) window.clearTimeout(debounceRef.current);

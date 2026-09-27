@@ -185,6 +185,8 @@ describe("TaskBoardPage", () => {
       assigneeId: null,
       reporterId: notStarted.reporter.id,
       dueDate: null,
+      description: null,
+      dependsOnIds: [],
       version: 1,
     });
   });
@@ -344,6 +346,35 @@ describe("TaskBoardPage", () => {
     // The stale "map" response resolves later; it must not replace the "curate" results.
     expect(within(await column("Not Started")).getByText(notStarted.name)).toBeInTheDocument();
     expect(within(await column("Completed")).queryByText(completed.name)).not.toBeInTheDocument();
+  });
+
+  it("keeps a filter toggled while a search is still debouncing", async () => {
+    const requests: string[] = [];
+    server.use(
+      http.get(BOARD_PATH, () => HttpResponse.json(buildBoard())),
+      http.get(MEMBERS_PATH, () => HttpResponse.json({ items: [buildMember()], nextCursor: null })),
+      http.get(TASKS_PATH, ({ request }) => {
+        const url = new URL(request.url);
+        requests.push(
+          `${url.searchParams.get("q") ?? ""}|${url.searchParams.get("includeArchived") ?? "false"}`,
+        );
+        return HttpResponse.json({ items: [notStarted], nextCursor: null });
+      }),
+    );
+    renderBoard();
+    await within(await column("Not Started")).findByText(notStarted.name);
+
+    const user = userEvent.setup({ delay: null });
+    await user.type(screen.getByRole("searchbox", { name: "Search tasks" }), "curate");
+    // Toggled inside the search debounce window: the pending search must not revert it.
+    fireEvent.click(screen.getByRole("button", { name: "Show archived" }));
+
+    await waitFor(() => expect(requests).toContain("curate|true"));
+    expect(await column("Archived")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide archived" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   it("shows the Archived column only when toggled, and archives/restores through the modal", async () => {

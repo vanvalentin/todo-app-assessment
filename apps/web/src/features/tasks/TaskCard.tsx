@@ -1,6 +1,7 @@
 import type { Task, TaskPriority } from "@ksat/contracts";
 import { Avatar } from "../../components/Avatar/Avatar";
 import calendarIcon from "../../assets/tasks/calendar.svg";
+import dependencyIcon from "../../assets/tasks/dependency-link.svg";
 import statusCompleteIcon from "../../assets/tasks/status-complete.svg";
 import { describeDueDate, PRIORITY_LABELS } from "./taskBoard";
 import styles from "./TaskCard.module.scss";
@@ -32,9 +33,9 @@ const DUE_TONE_CLASS = {
 
 /**
  * A task card. Clicking anywhere on it opens the task modal, which owns every field;
- * dragging it moves it between columns. Description, dependencies, attachments, tags,
- * and recurrence are later-phase fields and stay absent rather than filled with
- * placeholder data.
+ * dragging it moves it between columns. The first prerequisite appears in the Figma
+ * dependency pill; attachments, tags, and recurrence are later-phase fields and stay
+ * absent rather than filled with placeholder data.
  */
 export function TaskCard({
   task,
@@ -47,6 +48,7 @@ export function TaskCard({
   const titleId = `task-title-${task.id}`;
   const isCompleted = task.status === "COMPLETED";
   const due = describeDueDate(task.dueDate, now);
+  const [firstDependency, ...otherDependencies] = task.dependsOn;
   const className = [
     styles.card,
     isCompleted ? styles.cardCompleted : "",
@@ -92,6 +94,18 @@ export function TaskCard({
         <span className={styles.sequence}>#{task.sequence}</span>
         <span className={styles.creator}>{task.createdBy.name}</span>
       </p>
+      {firstDependency === undefined ? null : (
+        <p className={styles.dependency}>
+          <img src={dependencyIcon} alt="" width={10} height={5} />
+          <span className={styles.dependencyText}>
+            Depends on:{" "}
+            <span className={styles.dependencyName}>
+              #{firstDependency.sequence} {firstDependency.name}
+            </span>
+            {otherDependencies.length > 0 ? ` +${otherDependencies.length} more` : null}
+          </span>
+        </p>
+      )}
       {task.assignee !== null || due !== null ? (
         <div className={styles.footer}>
           {task.assignee === null ? (
