@@ -37,8 +37,42 @@ describe("demo seed policy", () => {
     for (const task of demoTasks) {
       perBoard.set(task.boardId, [...(perBoard.get(task.boardId) ?? []), task.sequence]);
     }
+    expect(perBoard.size).toBe(4);
     for (const sequences of perBoard.values()) {
+      expect(sequences).toHaveLength(6);
       expect(new Set(sequences).size).toBe(sequences.length);
+    }
+
+    expect(new Set(demoTasks.map((task) => task.status))).toEqual(
+      new Set(["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "ARCHIVED"]),
+    );
+    expect(new Set(demoTasks.map((task) => task.priority))).toEqual(
+      new Set(["LOW", "MEDIUM", "HIGH"]),
+    );
+    for (const field of ["assignee", "dueDate", "description"] as const) {
+      expect(demoTasks.some((task) => task[field] === null)).toBe(true);
+      expect(demoTasks.some((task) => task[field] !== null)).toBe(true);
+    }
+
+    const membersByBoard = new Map<string, ReadonlySet<string>>([
+      [
+        "01900000-0000-7000-8000-000000000001",
+        new Set(["ada@example.test", "grace@example.test", "linus@example.test"]),
+      ],
+      [
+        "01900000-0000-7000-8000-000000000002",
+        new Set(["grace@example.test", "ada@example.test", "maya@example.test"]),
+      ],
+      [
+        "01900000-0000-7000-8000-000000000003",
+        new Set(["linus@example.test", "maya@example.test"]),
+      ],
+      ["01900000-0000-7000-8000-000000000004", new Set(["maya@example.test", "ada@example.test"])],
+    ]);
+    for (const task of demoTasks) {
+      const members = membersByBoard.get(task.boardId);
+      expect(members?.has(task.creator)).toBe(true);
+      if (task.assignee !== null) expect(members?.has(task.assignee)).toBe(true);
     }
 
     // Every demo dependency stays on one board and never points at itself.
