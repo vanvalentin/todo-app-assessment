@@ -35,7 +35,11 @@ test("carries recurrence to each occurrence after the original is deleted", asyn
   await resumedDialog.getByRole("button", { name: /Save changes/ }).click();
   await expect(resumedDialog).not.toBeVisible();
 
-  await expect(page.getByLabel("Recurring task")).toBeVisible();
+  await expect(
+    card(page, "Not Started", taskName)
+      .locator("xpath=ancestor::article")
+      .getByLabel("Recurring task"),
+  ).toBeVisible();
 
   // Completing the original creates a current occurrence that owns the same repeat schedule.
   await card(page, "Not Started", taskName).click();

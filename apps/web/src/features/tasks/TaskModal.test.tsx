@@ -162,7 +162,27 @@ describe("TaskModal", () => {
     );
   });
 
-  it("builds a custom recurrence in its own dialog and discards it on Escape", async () => {
+  it("discards a custom recurrence on Escape without closing the task modal", async () => {
+    const user = userEvent.setup();
+    renderBoard();
+    const { modal } = await openCreateModal();
+    await user.click(within(modal).getByRole("button", { name: "Due date" }));
+    fireEvent.change(screen.getByLabelText("Due date", { selector: "input" }), {
+      target: { value: "2027-04-19" },
+    });
+    const repeat = within(modal).getByRole("combobox", { name: "Repeat" });
+
+    await user.click(repeat);
+    await user.click(await screen.findByRole("option", { name: "Custom…" }));
+    const custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(custom).not.toBeInTheDocument());
+    expect(modal).toBeInTheDocument();
+    expect(repeat).toHaveTextContent("Does not repeat");
+  });
+
+  it("builds a custom recurrence in its own dialog", async () => {
     const user = userEvent.setup();
     let posted: unknown = null;
     server.use(
@@ -184,15 +204,7 @@ describe("TaskModal", () => {
 
     await user.click(repeat);
     await user.click(await screen.findByRole("option", { name: "Custom…" }));
-    let custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
-    await user.keyboard("{Escape}");
-    await waitFor(() => expect(custom).not.toBeInTheDocument());
-    expect(modal).toBeInTheDocument();
-    expect(repeat).toHaveTextContent("Does not repeat");
-
-    await user.click(repeat);
-    await user.click(await screen.findByRole("option", { name: "Custom…" }));
-    custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
+    const custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
     expect(within(custom).getByRole("button", { name: "Monday" })).toHaveAttribute(
       "aria-pressed",
       "true",
