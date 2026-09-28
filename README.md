@@ -226,4 +226,5 @@ This project was built with AI coding agents, directed and reviewed by me.
 - **Planned in slices:** each feature was planned and delivered as a vertical slice (contract → database → API → web → tests), with acceptance criteria written before implementation.
 - **Independent review:** code written by one model family was reviewed by a different one to reduce shared blind spots.
 - **Human decisions:** requirement interpretation, scope and trade-offs were decided by me; see the decision log.
+- **Conversation log:** condensed excerpts of the agent sessions for each phase are in [`docs/ai-conversations/`](docs/ai-conversations/).
 - **Verification:** AI-written code had to pass the same checks as any change (`pnpm check`, integration tests and Playwright journeys in CI).
