@@ -338,25 +338,28 @@ sequenceDiagram
   participant API
   participant P as PostgreSQL
 
-  U->>API: Create task with schedule<br/>(RRULE + IANA timezone)
-  API->>API: Validate rule, compute first run
-  API->>P: Save task (template) + schedule
+  U->>API: Create task with due date + schedule<br/>(RRULE + IANA timezone)
+  API->>API: Validate rule, use due date as current occurrence
+  API->>P: Save task + schedule
 
-  U->>API: Move task to COMPLETED
+  U->>API: Move current task to COMPLETED
   API->>P: BEGIN
   API->>P: Update task (versioned)
-  API->>API: Next scheduled time after now<br/>(missed intervals skipped)
+  API->>API: Calculate next due date after now<br/>(missed intervals skipped)
   API->>P: Create NOT_STARTED task with next due date
   API->>P: Record occurrence (scheduleId, scheduledAt) unique
-  API->>P: Advance nextRunAt, or disable when exhausted
+  API->>P: Hand schedule to the next task<br/>and advance its due date, or disable when exhausted
   API->>P: COMMIT
   API-->>U: Completed task, next occurrence on the board
 ```
 
+- The schedule is a due-date pattern. Reaching a scheduled date does not create a task; completing the current task creates exactly one next occurrence.
+- A recurring task must have a due date, which is the current occurrence's date and the schedule anchor.
 - Occurrences are separate tasks: they copy name, description, priority and assignee, but not dependencies or attachments.
+- The schedule is handed to the newly generated task in the same transaction. Every current occurrence is therefore marked recurring and can create its successor; deleting an older occurrence, including the original task, does not break the series.
 - The unique `(scheduleId, scheduledAt)` record prevents duplicates from retries or concurrent completions.
-- Recurrence is evaluated in the chosen timezone, so a 9:00 task stays at 9:00 across daylight-saving changes.
-- Guided patterns (daily, weekdays, weekly, monthly, yearly) and advanced RRULEs share the same validation and preview; unsupported or high-frequency rules are rejected.
+- Recurrence is evaluated in the chosen timezone, so calendar dates remain stable across daylight-saving changes.
+- The **Repeat** menu offers due-date presets and a **Custom…** dialog (interval, weekdays, monthly day or nth weekday, never/on date/after N ends, timezone). Date-derived patterns follow the task when its due date moves. The UI stores RRULEs but never exposes raw RRULE text; the API still validates every rule and rejects unsupported parts.
 
 ## Attachments
 

@@ -54,6 +54,18 @@ pnpm db:seed:volume -- --help  # size options
 
 Sign in as `volume.user.0001@example.test` with the demo password. With Docker, run `docker compose run --rm migrate node dist/src/seed-volume.js`.
 
+### Inspecting the database
+
+Browse the data with Prisma Studio at http://localhost:5555:
+
+```bash
+pnpm --filter @ksat/api exec prisma studio --schema prisma/schema.prisma
+```
+
+It reads `DATABASE_URL` from `apps/api/.env`. With the Docker quick start, run `pnpm install` and copy `apps/api/.env.example` to `apps/api/.env` first.
+
+For SQL (for example `EXPLAIN ANALYZE` to check index usage), connect any PostgreSQL client such as DBeaver or TablePlus to `localhost:5432`, database `ksat`, user `postgres`, password `postgres`. These are the local defaults from `.env.example`.
+
 ### Recovering a deleted task
 
 There is no user-facing trash. An operator can restore a soft-deleted task:
@@ -161,7 +173,7 @@ The rationale and trade-offs are in the decision log.
 | --- | --- |
 | TODO fields | UUIDv7 ID, name, Markdown description, due date, status (`NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `ARCHIVED`), priority (`LOW`, `MEDIUM`, `HIGH`), assignee, dependencies and attachments. |
 | CRUD | Create, read, update and delete tasks from a Kanban board and task modal. |
-| Recurring tasks | Daily, weekly, monthly, yearly or custom RRULE schedules with an IANA timezone. Completing a recurring task creates its next occurrence in the same transaction. |
+| Recurring tasks | A calendar-style **Repeat** menu offers presets derived from the due date (daily, weekly on its weekday, monthly on its nth weekday, annually, every weekday) and a **Custom…** dialog for interval, weekdays, monthly pattern, end condition and IANA timezone. Rules are stored as RRULEs, but users never edit raw RRULE text. A recurring task requires a due date; completing it creates exactly one next occurrence with the next scheduled due date and hands the repeat schedule to that occurrence in the same transaction. Deleting an older occurrence, including the original task, therefore does not stop the series. Dates arriving on their own do not create tasks. |
 | Dependencies | A task can depend on other tasks on the same board. It cannot enter `IN_PROGRESS` or `COMPLETED` until its prerequisites are settled; self-dependencies and cycles are rejected. |
 | Filtering | Status, priority, due date (overdue, today, next 7 days, none), blocked/unblocked, assignee and name/number search. |
 | Sorting | Tasks are grouped in status columns and sorted by due date, priority, name, newest or oldest. |
