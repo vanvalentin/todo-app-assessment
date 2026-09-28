@@ -254,6 +254,41 @@ describe("tasks service", () => {
     });
   });
 
+  it("anchors recurrence to the task due date and stores only the following occurrence", async () => {
+    const createForMember = vi.fn(
+      async (): Promise<CreateTaskResult> => ({ kind: "CREATED", task: buildTask() }),
+    );
+    const service = createTasksService({ repository: repository({ createForMember }) });
+
+    await service.createTask(USER_ID, BOARD_ID, {
+      name: "Daily check",
+      status: "NOT_STARTED",
+      priority: "MEDIUM",
+      assigneeId: null,
+      description: null,
+      dependsOnIds: [],
+      dueDate: "2099-01-10",
+      schedule: {
+        rrule: "FREQ=DAILY;INTERVAL=1",
+        timezone: "UTC",
+        startLocal: "2099-02-20T09:00:00",
+        enabled: true,
+      },
+    });
+
+    expect(createForMember).toHaveBeenCalledWith(
+      BOARD_ID,
+      USER_ID,
+      expect.objectContaining({
+        dueDate: "2099-01-10",
+        schedule: expect.objectContaining({
+          startLocal: "2099-01-10T09:00:00",
+          nextRunAt: new Date("2099-01-11T09:00:00.000Z"),
+        }),
+      }),
+    );
+  });
+
   it("rejects a task that depends on itself without touching the repository", async () => {
     const updateForMember = vi.fn(
       async (): Promise<UpdateTaskResult> => ({ kind: "UPDATED", task: buildTask() }),

@@ -159,7 +159,16 @@ export const createTaskRequestSchema = z
     /** Optional for backwards-compatible clients; omitted means no schedule. */
     schedule: taskScheduleInputSchema.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.schedule !== undefined && input.schedule !== null && input.dueDate === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dueDate"],
+        message: "A recurring task must have a due date.",
+      });
+    }
+  });
 export type CreateTaskRequest = z.infer<typeof createTaskRequestSchema>;
 export type CreateTaskRequestInput = z.input<typeof createTaskRequestSchema>;
 
@@ -182,7 +191,16 @@ export const updateTaskRequestSchema = z
     schedule: taskScheduleInputSchema.nullable().optional(),
     version: versionSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((input, context) => {
+    if (input.schedule !== undefined && input.schedule !== null && input.dueDate === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["dueDate"],
+        message: "A recurring task must have a due date.",
+      });
+    }
+  });
 export type UpdateTaskRequest = z.infer<typeof updateTaskRequestSchema>;
 export type UpdateTaskRequestInput = z.input<typeof updateTaskRequestSchema>;
 

@@ -105,14 +105,27 @@ function recurrenceError(error: RecurrenceValidationError): HttpError {
   return new HttpError(422, code, detail);
 }
 
-function scheduleInput(input: CreateTaskRequest["schedule"]): TaskScheduleWrite | null {
+function scheduleInput(
+  input: CreateTaskRequest["schedule"],
+  dueDate: string | null,
+): TaskScheduleWrite | null {
   if (input === undefined || input === null) return null;
+  if (dueDate === null) throw scheduleDueDateRequired();
+  const time = input.startLocal.slice(10);
   try {
-    return parseSchedule(input);
+    return parseSchedule({ ...input, startLocal: `${dueDate}${time}` }, new Date(), true);
   } catch (error) {
     if (error instanceof RecurrenceValidationError) throw recurrenceError(error);
     throw error;
   }
+}
+
+function scheduleDueDateRequired(): HttpError {
+  return new HttpError(
+    422,
+    "TASK_SCHEDULE_DUE_DATE_REQUIRED",
+    "A recurring task must have a due date.",
+  );
 }
 
 function boardNotFound(): HttpError {
@@ -168,6 +181,8 @@ function writeViolation(kind: TaskWriteViolation["kind"]): HttpError {
   switch (kind) {
     case "ASSIGNEE_NOT_MEMBER":
       return assigneeNotMember();
+    case "SCHEDULE_DUE_DATE_REQUIRED":
+      return scheduleDueDateRequired();
     case "DEPENDENCY_NOT_FOUND":
       return dependencyNotFound();
     case "DEPENDENCIES_INCOMPLETE":
@@ -283,7 +298,9 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         // The assignee may be any active board member.
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
-        ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),
+        ...(input.schedule !== undefined
+          ? { schedule: scheduleInput(input.schedule, input.dueDate) }
+          : {}),
       });
       if (result.kind === "NOT_FOUND") throw boardNotFound();
       if (result.kind !== "CREATED") throw writeViolation(result.kind);
@@ -308,7 +325,9 @@ export function createTasksService({ repository }: TasksServiceDeps): TasksServi
         assigneeId: input.assigneeId,
         dueDate: input.dueDate,
         dependsOnIds: input.dependsOnIds,
-        ...(input.schedule !== undefined ? { schedule: scheduleInput(input.schedule) } : {}),
+        ...(input.schedule !== undefined
+          ? { schedule: scheduleInput(input.schedule, input.dueDate) }
+          : {}),
         version: input.version,
       });
       if (result.kind === "NOT_FOUND") throw taskNotFound();

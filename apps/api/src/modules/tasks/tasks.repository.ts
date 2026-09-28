@@ -390,22 +390,8 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     now: Date,
   ): Promise<void> {
     const schedule = await tx.taskSchedule.findFirst({
-      where: {
-        enabled: true,
-        OR: [{ taskId }, { occurrences: { some: { generatedTaskId: taskId } } }],
-      },
+      where: { enabled: true, taskId },
       include: {
-        task: {
-          select: {
-            boardId: true,
-            name: true,
-            description: true,
-            priority: true,
-            assigneeId: true,
-            createdById: true,
-            deletedAt: true,
-          },
-        },
         occurrences: {
           where: { generatedTaskId: taskId },
           select: { scheduledAt: true },
@@ -413,7 +399,19 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
         },
       },
     });
-    if (!schedule?.task || schedule.task.deletedAt !== null) return;
+    if (!schedule) return;
+    const currentTask = await tx.task.findFirst({
+      where: { id: taskId, deletedAt: null },
+      select: {
+        boardId: true,
+        name: true,
+        description: true,
+        priority: true,
+        assigneeId: true,
+        createdById: true,
+      },
+    });
+    if (!currentTask) return;
 
     const currentScheduledAt = schedule.occurrences[0]?.scheduledAt ?? schedule.nextRunAt;
     if (!currentScheduledAt) return;
@@ -433,7 +431,7 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     }
 
     const board = await tx.board.update({
-      where: { id: schedule.task.boardId },
+      where: { id: currentTask.boardId },
       data: { nextTaskSequence: { increment: 1 } },
       select: { nextTaskSequence: true },
     });
@@ -441,15 +439,15 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
     await tx.task.create({
       data: {
         id: generatedTaskId,
-        boardId: schedule.task.boardId,
+        boardId: currentTask.boardId,
         sequence: board.nextTaskSequence - 1,
-        name: schedule.task.name,
-        description: schedule.task.description,
+        name: currentTask.name,
+        description: currentTask.description,
         status: "NOT_STARTED",
-        priority: schedule.task.priority,
-        assigneeId: schedule.task.assigneeId,
+        priority: currentTask.priority,
+        assigneeId: currentTask.assigneeId,
         dueDate: occurrenceDueDate(scheduledAt, schedule.timezone),
-        createdById: schedule.task.createdById,
+        createdById: currentTask.createdById,
       },
       select: { id: true },
     });
@@ -462,9 +460,14 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
       },
     });
     const nextRunAt = nextOccurrence(schedule, scheduledAt);
+    // The recurrence belongs to the current occurrence, not permanently to the first task.
+    // Moving it in the same transaction lets the new task continue the series even when
+    // any older occurrence (including the original task) is later soft-deleted.
     await tx.taskSchedule.update({
       where: { id: schedule.id },
-      data: nextRunAt ? { nextRunAt } : { nextRunAt: null, enabled: false },
+      data: nextRunAt
+        ? { taskId: generatedTaskId, nextRunAt }
+        : { taskId: generatedTaskId, nextRunAt: null, enabled: false },
     });
   }
 
@@ -499,6 +502,9 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             select: { userId: true },
           });
           if (!membership) return { kind: "NOT_FOUND" } as const;
+          if (input.schedule && input.dueDate === null) {
+            return { kind: "SCHEDULE_DUE_DATE_REQUIRED" } as const;
+          }
 
           const violation = await checkPeopleMembership(tx, boardId, input);
           if (violation) return { kind: violation } as const;
@@ -589,11 +595,17 @@ export function createPrismaTasksRepository(prisma: PrismaClient): TasksReposito
             select: {
               boardId: true,
               status: true,
+              schedule: { select: { id: true } },
               dependencies: { select: { dependsOnTaskId: true } },
             },
           });
           if (!existing) return { kind: "NOT_FOUND" } as const;
           const { boardId } = existing;
+          const keepsSchedule =
+            input.schedule !== null && (input.schedule !== undefined || existing.schedule !== null);
+          if (keepsSchedule && input.dueDate === null) {
+            return { kind: "SCHEDULE_DUE_DATE_REQUIRED" } as const;
+          }
 
           const violation = await checkPeopleMembership(tx, boardId, input);
           if (violation) return { kind: violation } as const;

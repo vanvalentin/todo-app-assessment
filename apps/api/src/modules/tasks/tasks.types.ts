@@ -112,6 +112,8 @@ export interface TaskWriteInput {
 /** Validation failures shared by create and update. */
 export type TaskWriteViolation =
   | { readonly kind: "ASSIGNEE_NOT_MEMBER" }
+  /** A recurrence schedule is a due-date pattern and cannot exist without a current due date. */
+  | { readonly kind: "SCHEDULE_DUE_DATE_REQUIRED" }
   /** A dependency id is unknown, deleted, or belongs to another board. */
   | { readonly kind: "DEPENDENCY_NOT_FOUND" }
   /** Moving into IN_PROGRESS or COMPLETED requires every selected prerequisite to be settled. */

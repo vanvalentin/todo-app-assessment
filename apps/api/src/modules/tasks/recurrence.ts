@@ -135,7 +135,11 @@ function nextAfter(rule: RRuleType, timezone: string, after: Date): Date | null 
   );
 }
 
-export function parseSchedule(input: TaskScheduleInput, now = new Date()): ParsedSchedule {
+export function parseSchedule(
+  input: TaskScheduleInput,
+  now = new Date(),
+  afterCurrentOccurrence = false,
+): ParsedSchedule {
   if (!IANAZone.isValidZone(input.timezone)) {
     throw new RecurrenceValidationError(
       "TIMEZONE_INVALID",
@@ -146,7 +150,9 @@ export function parseSchedule(input: TaskScheduleInput, now = new Date()): Parse
   const body = bodyOf(input.rrule);
   const startInstant = fromFloating(floatingDate(start), input.timezone);
   const rule = validateRule(body, floatingDate(start));
-  const nextRunAt = input.enabled ? nextAfter(rule, input.timezone, now) : null;
+  const nextAnchor =
+    afterCurrentOccurrence && startInstant.getTime() > now.getTime() ? startInstant : now;
+  const nextRunAt = input.enabled ? nextAfter(rule, input.timezone, nextAnchor) : null;
   if (input.enabled && nextRunAt === null) {
     throw new RecurrenceValidationError(
       "SCHEDULE_NO_FUTURE_OCCURRENCES",

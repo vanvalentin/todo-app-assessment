@@ -111,6 +111,25 @@ describe("task contracts", () => {
     );
   });
 
+  it("requires a due date whenever a recurrence schedule is supplied", () => {
+    const schedule = {
+      rrule: "FREQ=WEEKLY;INTERVAL=1;BYDAY=MO",
+      timezone: "Europe/Paris",
+      startLocal: "2027-04-19T09:00:00",
+      enabled: true,
+    };
+    expect(createTaskRequestSchema.safeParse({ name: "Recurring task", schedule }).success).toBe(
+      false,
+    );
+    expect(
+      createTaskRequestSchema.safeParse({
+        name: "Recurring task",
+        dueDate: "2027-04-19",
+        schedule,
+      }).success,
+    ).toBe(true);
+  });
+
   it("never lets a client create a task directly into ARCHIVED, but an edit/move may archive or restore it", () => {
     expect(createTaskRequestSchema.safeParse({ name: "Task", status: "ARCHIVED" }).success).toBe(
       false,

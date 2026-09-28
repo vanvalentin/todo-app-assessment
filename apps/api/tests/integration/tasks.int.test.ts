@@ -1020,7 +1020,7 @@ run("PostgreSQL tasks", () => {
       ).rejects.toThrow(/task_description_length/);
     });
 
-    it("generates one idempotent occurrence with copied stable fields", async () => {
+    it("hands recurrence to each occurrence and continues after the original is deleted", async () => {
       const template = await create("Worker template");
       const scheduledAt = new Date("2027-04-20T13:00:00.000Z");
       const updated = await repository.updateForMember(template.id, ids.contributor, {
@@ -1029,7 +1029,7 @@ run("PostgreSQL tasks", () => {
         status: template.status,
         priority: "HIGH",
         assigneeId: ids.admin,
-        dueDate: null,
+        dueDate: "2027-04-19",
         dependsOnIds: [],
         schedule: {
           rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
@@ -1049,11 +1049,12 @@ run("PostgreSQL tasks", () => {
         status: "COMPLETED",
         priority: "HIGH",
         assigneeId: ids.admin,
-        dueDate: null,
+        dueDate: "2027-04-19",
         dependsOnIds: [],
         version: updated.task.version,
       });
       expect(completed.kind).toBe("UPDATED");
+      if (completed.kind !== "UPDATED") throw new Error("expected completion to succeed");
       await expect(
         repository.updateForMember(template.id, ids.contributor, {
           name: template.name,
@@ -1061,7 +1062,7 @@ run("PostgreSQL tasks", () => {
           status: "COMPLETED",
           priority: "HIGH",
           assigneeId: ids.admin,
-          dueDate: null,
+          dueDate: "2027-04-19",
           dependsOnIds: [],
           version: updated.task.version,
         }),
@@ -1078,7 +1079,61 @@ run("PostgreSQL tasks", () => {
         assigneeId: ids.admin,
         dueDate: new Date("2027-04-20T00:00:00.000Z"),
       });
-      expect(await prisma.scheduleOccurrence.count({ where: { scheduleId: schedule.id } })).toBe(1);
+      if (occurrence?.generatedTask === null || occurrence?.generatedTask === undefined) {
+        throw new Error("expected the first generated occurrence");
+      }
+      const firstOccurrence = await repository.getForMember(
+        occurrence.generatedTask.id,
+        ids.contributor,
+      );
+      expect(firstOccurrence).toMatchObject({
+        recurrence: {
+          schedule: { id: schedule.id, enabled: true },
+          occurrence: { scheduledAt: scheduledAt.toISOString() },
+        },
+      });
+      if (firstOccurrence === null) throw new Error("expected the first occurrence to be visible");
+      await expect(
+        repository.deleteForMember(template.id, ids.contributor, completed.task.version),
+      ).resolves.toBe("DELETED");
+
+      const completedFirstOccurrence = await repository.updateForMember(
+        firstOccurrence.id,
+        ids.contributor,
+        {
+          name: firstOccurrence.name,
+          description: firstOccurrence.description,
+          status: "COMPLETED",
+          priority: firstOccurrence.priority,
+          assigneeId: firstOccurrence.assignee?.id ?? null,
+          dueDate: firstOccurrence.dueDate?.toISOString().slice(0, 10) ?? null,
+          dependsOnIds: [],
+          version: firstOccurrence.version,
+        },
+      );
+      expect(completedFirstOccurrence.kind).toBe("UPDATED");
+
+      const advancedSchedule = await prisma.taskSchedule.findUnique({
+        where: { id: schedule.id },
+        include: { occurrences: { orderBy: { scheduledAt: "asc" } } },
+      });
+      expect(advancedSchedule?.occurrences).toHaveLength(2);
+      expect(advancedSchedule?.taskId).not.toBe(firstOccurrence.id);
+      if (advancedSchedule?.taskId === null || advancedSchedule?.taskId === undefined) {
+        throw new Error("expected recurrence to move to the second occurrence");
+      }
+      const secondOccurrence = await repository.getForMember(
+        advancedSchedule.taskId,
+        ids.contributor,
+      );
+      expect(secondOccurrence).toMatchObject({
+        status: "NOT_STARTED",
+        dueDate: new Date("2027-04-21T00:00:00.000Z"),
+        recurrence: {
+          schedule: { id: schedule.id, enabled: true },
+          occurrence: { scheduledAt: "2027-04-21T13:00:00.000Z" },
+        },
+      });
     });
 
     it("retains a schedule when its task is soft-deleted", async () => {
@@ -1089,7 +1144,7 @@ run("PostgreSQL tasks", () => {
         status: task.status,
         priority: task.priority,
         assigneeId: null,
-        dueDate: null,
+        dueDate: "2027-04-19",
         dependsOnIds: [],
         schedule: {
           rrule: "RRULE:FREQ=DAILY;INTERVAL=1",
@@ -1107,6 +1162,18 @@ run("PostgreSQL tasks", () => {
       const schedule = await prisma.taskSchedule.findUnique({ where: { taskId: task.id } });
       expect(schedule).toMatchObject({ timezone: "America/New_York", enabled: true });
       if (schedule === null) throw new Error("expected a persisted schedule");
+      await expect(
+        repository.updateForMember(task.id, ids.contributor, {
+          name: task.name,
+          description: task.description,
+          status: task.status,
+          priority: task.priority,
+          assigneeId: null,
+          dueDate: null,
+          dependsOnIds: [],
+          version: task.version + 1,
+        }),
+      ).resolves.toEqual({ kind: "SCHEDULE_DUE_DATE_REQUIRED" });
       await expect(
         repository.deleteForMember(task.id, ids.contributor, task.version + 1),
       ).resolves.toBe("DELETED");
