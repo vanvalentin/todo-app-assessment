@@ -1,12 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { card } from "./support";
 
 const DEMO_BOARD_ID = "01900000-0000-7000-8000-000000000001";
-const DEMO_TASK_NAME = "Confirm zine fair booth allocation";
-
 /** Requires the Compose/Vite stack with SEED_DEMO_DATA=true and the seeded demo accounts. */
-test("pauses and resumes a seeded recurring task without editing its template", async ({
-  page,
-}) => {
+test("carries recurrence to each occurrence after the original is deleted", async ({ page }) => {
   await page.goto("/login?mode=sign-in");
   await page.getByLabel("Email").fill("ada@example.test");
   await page.getByLabel("Password").fill("ksat-demo-password-2027");
@@ -14,9 +11,16 @@ test("pauses and resumes a seeded recurring task without editing its template", 
   await page.waitForURL(/\/boards$/);
 
   await page.goto(`/boards/${DEMO_BOARD_ID}`);
-  const task = page.getByRole("button", { name: DEMO_TASK_NAME });
-  await expect(task).toBeVisible();
-  await task.click();
+  const taskName = `Recurring carry-over ${Date.now()}`;
+  await page.getByRole("button", { name: "New Task" }).first().click();
+  const createDialog = page.getByRole("dialog");
+  await createDialog.getByLabel("Task name").fill(taskName);
+  await createDialog.getByRole("button", { name: "Due date" }).click();
+  await page.locator('input[type="date"]').fill("2099-04-19");
+  await createDialog.getByRole("combobox", { name: "Repeat" }).click();
+  await page.getByRole("option", { name: "Daily" }).click();
+  await createDialog.getByRole("button", { name: "Create task" }).click();
+  await card(page, "Not Started", taskName).click();
 
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("button", { name: "Pause" })).toBeVisible();
@@ -24,7 +28,7 @@ test("pauses and resumes a seeded recurring task without editing its template", 
   await dialog.getByRole("button", { name: /Save changes/ }).click();
   await expect(dialog).not.toBeVisible();
 
-  await page.getByRole("button", { name: DEMO_TASK_NAME }).click();
+  await card(page, "Not Started", taskName).click();
   const resumedDialog = page.getByRole("dialog");
   await expect(resumedDialog.getByRole("button", { name: "Resume" })).toBeVisible();
   await resumedDialog.getByRole("button", { name: "Resume" }).click();
@@ -32,4 +36,36 @@ test("pauses and resumes a seeded recurring task without editing its template", 
   await expect(resumedDialog).not.toBeVisible();
 
   await expect(page.getByLabel("Recurring task")).toBeVisible();
+
+  // Completing the original creates a current occurrence that owns the same repeat schedule.
+  await card(page, "Not Started", taskName).click();
+  const originalDialog = page.getByRole("dialog");
+  await originalDialog.getByRole("combobox", { name: "Status" }).click();
+  await page.getByRole("option", { name: "Completed" }).click();
+  await originalDialog.getByRole("button", { name: /Save changes/ }).click();
+  const firstOccurrence = card(page, "Not Started", taskName);
+  await expect(firstOccurrence).toBeVisible();
+  await expect(
+    firstOccurrence.locator("xpath=ancestor::article").getByLabel("Recurring task"),
+  ).toBeVisible();
+
+  // Removing the completed original must not sever the schedule from the current occurrence.
+  await card(page, "Completed", taskName).click();
+  const completedOriginal = page.getByRole("dialog");
+  await completedOriginal.getByRole("button", { name: "Delete task" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete task" }).click();
+  await expect(card(page, "Completed", taskName)).toHaveCount(0);
+
+  await firstOccurrence.click();
+  const occurrenceDialog = page.getByRole("dialog");
+  await expect(occurrenceDialog.getByRole("button", { name: "Pause" })).toBeVisible();
+  await occurrenceDialog.getByRole("combobox", { name: "Status" }).click();
+  await page.getByRole("option", { name: "Completed" }).click();
+  await occurrenceDialog.getByRole("button", { name: /Save changes/ }).click();
+
+  const nextOccurrence = card(page, "Not Started", taskName);
+  await expect(nextOccurrence).toBeVisible();
+  await expect(
+    nextOccurrence.locator("xpath=ancestor::article").getByLabel("Recurring task"),
+  ).toBeVisible();
 });

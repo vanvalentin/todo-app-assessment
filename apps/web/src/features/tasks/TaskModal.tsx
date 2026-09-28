@@ -33,6 +33,7 @@ import { DependencyPicker } from "./DependencyPicker";
 import { DescriptionField } from "./DescriptionField";
 import { AttachmentField } from "./AttachmentField";
 import { RecurrenceField } from "./RecurrenceField";
+import { anchoredStart, retargetRule } from "./recurrenceRules";
 import { dependencyErrorMessage, taskMutationErrorMessage } from "./taskBoard";
 import { useBoardMembers, withKnownPerson } from "./useBoardMembers";
 import styles from "./TaskModal.module.scss";
@@ -385,6 +386,18 @@ export function TaskModal({
                 value={dueDate}
                 onChange={(next) => {
                   setDueDate(next);
+                  setSchedule((current) => {
+                    if (current === null || next === null) return null;
+                    return {
+                      ...current,
+                      // Date-derived patterns such as "Weekly on Monday" follow the due date.
+                      rrule:
+                        dueDate === null
+                          ? current.rrule
+                          : retargetRule(current.rrule, dueDate, next),
+                      startLocal: anchoredStart(next, current.startLocal),
+                    };
+                  });
                   markDirty();
                 }}
                 disabled={isBusy}
@@ -409,6 +422,11 @@ export function TaskModal({
 
             <RecurrenceField
               value={schedule}
+              dueDate={dueDate}
+              onDueDateChange={(next) => {
+                setDueDate(next);
+                markDirty();
+              }}
               onChange={(next) => {
                 setSchedule(next);
                 markDirty();

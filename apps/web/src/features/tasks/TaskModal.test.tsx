@@ -121,6 +121,109 @@ describe("TaskModal", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
+  it("offers due-date presets and keeps Weekly following the due date", async () => {
+    let posted: unknown = null;
+    server.use(
+      http.post(TASKS_PATH, async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json(buildTask({ id: crypto.randomUUID() }), { status: 201 });
+      }),
+    );
+    renderBoard();
+    const { modal } = await openCreateModal();
+    fireEvent.change(within(modal).getByLabelText("Task name"), {
+      target: { value: "Weekly report" },
+    });
+    await userEvent.click(within(modal).getByRole("button", { name: "Due date" }));
+    fireEvent.change(screen.getByLabelText("Due date", { selector: "input" }), {
+      target: { value: "2027-04-19" },
+    });
+    const repeat = within(modal).getByRole("combobox", { name: "Repeat" });
+    await choosePill(modal, "Repeat", "Weekly on Monday");
+    expect(within(modal).getByText(/creates the next one, due Mon, Apr 26, 2027/)).toBeVisible();
+
+    // Moving the due date to Wednesday moves the weekly pattern with it.
+    await userEvent.click(within(modal).getByRole("button", { name: "Due date" }));
+    fireEvent.change(screen.getByLabelText("Due date", { selector: "input" }), {
+      target: { value: "2027-04-21" },
+    });
+    expect(repeat).toHaveTextContent("Weekly on Wednesday");
+    fireEvent.click(within(modal).getByRole("button", { name: "Create task" }));
+
+    await waitFor(() =>
+      expect(posted).toMatchObject({
+        dueDate: "2027-04-21",
+        schedule: expect.objectContaining({
+          rrule: "FREQ=WEEKLY;INTERVAL=1;BYDAY=WE",
+          startLocal: "2027-04-21T09:00:00",
+          enabled: true,
+        }),
+      }),
+    );
+  });
+
+  it("builds a custom recurrence in its own dialog and discards it on Escape", async () => {
+    const user = userEvent.setup();
+    let posted: unknown = null;
+    server.use(
+      http.post(TASKS_PATH, async ({ request }) => {
+        posted = await request.json();
+        return HttpResponse.json(buildTask({ id: crypto.randomUUID() }), { status: 201 });
+      }),
+    );
+    renderBoard();
+    const { modal } = await openCreateModal();
+    fireEvent.change(within(modal).getByLabelText("Task name"), {
+      target: { value: "Studio check-in" },
+    });
+    await user.click(within(modal).getByRole("button", { name: "Due date" }));
+    fireEvent.change(screen.getByLabelText("Due date", { selector: "input" }), {
+      target: { value: "2027-04-19" },
+    });
+    const repeat = within(modal).getByRole("combobox", { name: "Repeat" });
+
+    await user.click(repeat);
+    await user.click(await screen.findByRole("option", { name: "Custom…" }));
+    let custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(custom).not.toBeInTheDocument());
+    expect(modal).toBeInTheDocument();
+    expect(repeat).toHaveTextContent("Does not repeat");
+
+    await user.click(repeat);
+    await user.click(await screen.findByRole("option", { name: "Custom…" }));
+    custom = await screen.findByRole("dialog", { name: "Custom recurrence" });
+    expect(within(custom).getByRole("button", { name: "Monday" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await user.clear(within(custom).getByLabelText("Repeat every"));
+    await user.type(within(custom).getByLabelText("Repeat every"), "2");
+    await user.click(within(custom).getByRole("button", { name: "Friday" }));
+    await user.click(within(custom).getByRole("radio", { name: "After" }));
+    await user.clear(within(custom).getByLabelText("Number of occurrences"));
+    await user.click(within(custom).getByRole("combobox", { name: "Time zone" }));
+    await user.click(await screen.findByRole("option", { name: "Europe / Paris" }));
+    await user.click(within(custom).getByRole("button", { name: "Done" }));
+    expect(within(custom).getByRole("alert")).toHaveTextContent(/Occurrences must be/);
+
+    await user.type(within(custom).getByLabelText("Number of occurrences"), "5");
+    await user.click(within(custom).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(custom).not.toBeInTheDocument());
+    expect(repeat).toHaveTextContent("Every 2 weeks on Monday, Friday, 5 times");
+
+    await user.click(within(modal).getByRole("button", { name: "Create task" }));
+    await waitFor(() =>
+      expect(posted).toMatchObject({
+        dueDate: "2027-04-19",
+        schedule: expect.objectContaining({
+          rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,FR;COUNT=5",
+          timezone: "Europe/Paris",
+        }),
+      }),
+    );
+  });
+
   it("supports Create more and keeps selected people and date", async () => {
     const posted: unknown[] = [];
     server.use(

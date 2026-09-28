@@ -49,6 +49,9 @@ export function TaskCard({
   const isCompleted = task.status === "COMPLETED";
   const due = describeDueDate(task.dueDate, now);
   const [firstDependency, ...otherDependencies] = task.dependsOn;
+  const isRecurring =
+    (task.recurrence?.schedule !== null && task.recurrence?.schedule !== undefined) ||
+    (task.recurrence?.occurrence !== null && task.recurrence?.occurrence !== undefined);
   const className = [
     styles.card,
     isCompleted ? styles.cardCompleted : "",
@@ -65,13 +68,9 @@ export function TaskCard({
       data-overlay={isOverlay ? "true" : undefined}
     >
       <div className={styles.cardTop}>
-        {task.recurrence?.schedule?.enabled === true ? (
+        {isRecurring ? (
           <span className={styles.recurrenceBadge} aria-label="Recurring task">
             ↻ Recurring
-          </span>
-        ) : task.recurrence?.occurrence !== null && task.recurrence?.occurrence !== undefined ? (
-          <span className={styles.recurrenceBadge} aria-label="Generated recurring occurrence">
-            ↻ Occurrence
           </span>
         ) : null}
         {isCompleted ? (
