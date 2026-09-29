@@ -34,7 +34,12 @@ import { DescriptionField } from "./DescriptionField";
 import { AttachmentField } from "./AttachmentField";
 import { RecurrenceField } from "./RecurrenceField";
 import { anchoredStart, retargetRule } from "./recurrenceRules";
-import { dependencyErrorMessage, taskMutationErrorMessage } from "./taskBoard";
+import {
+  attachmentUploadErrorMessage,
+  createdWithFailedUploadsMessage,
+  dependencyErrorMessage,
+  taskMutationErrorMessage,
+} from "./taskBoard";
 import { useBoardMembers, withKnownPerson } from "./useBoardMembers";
 import styles from "./TaskModal.module.scss";
 
@@ -59,6 +64,8 @@ export interface TaskModalProps {
   readonly onSave: (values: TaskEditValues) => Promise<unknown>;
   /** Editing only: hands deletion to the confirmation dialog. */
   readonly onRequestDelete?: (() => void) | undefined;
+  /** Create only: the task was saved but some staged attachments failed to upload. */
+  readonly onUploadError?: ((message: string) => void) | undefined;
 }
 
 function scheduleInputFromTask(task: Task | undefined): TaskScheduleInput | null {
@@ -96,6 +103,7 @@ export function TaskModal({
   onCreate,
   onSave,
   onRequestDelete,
+  onUploadError,
 }: TaskModalProps) {
   const isEditing = task !== undefined;
   const occurrence = task?.recurrence?.occurrence;
@@ -218,7 +226,19 @@ export function TaskModal({
           "id" in created &&
           typeof created.id === "string"
         ) {
-          for (const file of attachmentFiles) await uploadTaskAttachment(created.id, file);
+          // The task already exists, so an upload failure must not be reported as a
+          // failed save (retrying would create a duplicate task).
+          const failures: string[] = [];
+          for (const file of attachmentFiles) {
+            try {
+              await uploadTaskAttachment(created.id, file);
+            } catch (uploadError) {
+              failures.push(attachmentUploadErrorMessage(file.name, uploadError));
+            }
+          }
+          if (failures.length > 0) {
+            onUploadError?.(createdWithFailedUploadsMessage(values.name, failures));
+          }
         }
         if (createMore) {
           // Create more keeps the shared properties but not per-task content.

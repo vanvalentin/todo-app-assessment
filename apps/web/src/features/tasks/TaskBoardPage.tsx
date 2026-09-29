@@ -587,6 +587,7 @@ export function TaskBoardPage() {
           boardName={board.name}
           onClose={closeCreate}
           onCreate={(values) => createMutation.mutateAsync(values)}
+          onUploadError={(message) => notify("error", message)}
           onSave={submitEdit}
         />
       ) : null}

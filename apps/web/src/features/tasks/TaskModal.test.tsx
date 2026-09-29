@@ -258,6 +258,48 @@ describe("TaskModal", () => {
     expect(within(modal).getByLabelText("Task name")).toHaveFocus();
   });
 
+  it("closes after creating a task and reports a rejected attachment as an upload failure", async () => {
+    const created = buildTask({ id: "01900000-0000-7000-8000-000000000503", name: "Spec review" });
+    let creates = 0;
+    server.use(
+      http.post(TASKS_PATH, () => {
+        creates += 1;
+        return HttpResponse.json(created, { status: 201 });
+      }),
+      http.post(`/api/v1/tasks/${created.id}/attachments`, () =>
+        HttpResponse.json(
+          {
+            type: "about:blank",
+            title: "Payload Too Large",
+            status: 413,
+            code: "ATTACHMENT_TOO_LARGE",
+            detail: "The file exceeds the per-file limit.",
+            requestId: "req-upload-413",
+          },
+          { status: 413, headers: { "Content-Type": "application/problem+json" } },
+        ),
+      ),
+    );
+    renderBoard();
+    const { modal } = await openCreateModal();
+    fireEvent.change(within(modal).getByLabelText("Task name"), {
+      target: { value: "Spec review" },
+    });
+    await userEvent.upload(
+      within(modal).getByLabelText("Upload file"),
+      new File(["spec"], "spec.pdf", { type: "application/pdf" }),
+    );
+    fireEvent.click(within(modal).getByRole("button", { name: "Create task" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(creates).toBe(1);
+    expect(
+      await screen.findByText(
+        "Created \u201cSpec review\u201d, but spec.pdf couldn\u2019t be uploaded: The file exceeds the per-file limit. Open the task to retry.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("marks non-member assignee errors on the pill", async () => {
     server.use(
       http.post(TASKS_PATH, () =>

@@ -207,6 +207,29 @@ export function dependencyErrorMessage(code: string | undefined): string | null 
   return null;
 }
 
+/** Why one staged attachment failed to upload after its task was already created. */
+export function attachmentUploadErrorMessage(filename: string, error: unknown): string {
+  if (error instanceof NetworkError)
+    return `${filename} couldn’t be uploaded: Ksat is unreachable.`;
+  if (error instanceof ApiError) {
+    if (error.code.startsWith("ATTACHMENT_") && error.detail !== undefined) {
+      return `${filename} couldn’t be uploaded: ${error.detail}`;
+    }
+    if (error.status === 413) return `${filename} couldn’t be uploaded: the file is too large.`;
+  }
+  return `${filename} couldn’t be uploaded.`;
+}
+
+/** Toast copy when a task was created but some of its staged attachments were not. */
+export function createdWithFailedUploadsMessage(
+  taskName: string,
+  failures: readonly string[],
+): string {
+  const [first, ...rest] = failures;
+  const more = rest.length === 0 ? "" : ` ${rest.length} more file(s) also failed.`;
+  return `Created “${taskName}”, but ${first ?? "an attachment couldn’t be uploaded."}${more} Open the task to retry.`;
+}
+
 export function taskMutationErrorMessage(error: unknown): string {
   if (error instanceof NetworkError) {
     return "We couldn’t reach Ksat. Your change was not saved.";
