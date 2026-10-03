@@ -1,0 +1,317 @@
+name: Deploy
+
+# Deploys what CI already proved. A push to master targets production; a push
+# to a release/* branch (re)creates that branch's own environment.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches:
+      - master
+      - release/**
+  workflow_dispatch:
+
+concurrency:
+  # One deploy per environment at a time, never cancelled half way.
+  group: deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  NODE_VERSION: "24.12.0"
+
+jobs:
+  prepare:
+    name: Resolve the target environment
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      kind: ${{ steps.target.outputs.kind }}
+      release: ${{ steps.target.outputs.release }}
+      branch: ${{ steps.target.outputs.branch }}
+      sha: ${{ steps.target.outputs.sha }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The helper is shared with the teardown workflow, so a branch always maps
+      # to the same environment name.
+      - name: Resolve the target environment
+        id: target
+        env:
+          REF: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          branch="${REF:-$GITHUB_REF_NAME}"
+          kind=none
+          release=""
+          case "$branch" in
+            master) kind=prod ;;
+            release/*)
+              release="$(node apps/api/scripts/release-name.ts "$branch")"
+              kind=preview
+              ;;
+          esac
+          {
+            echo "kind=$kind"
+            echo "release=$release"
+            echo "branch=$branch"
+            echo "sha=$SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "Target: $kind $release ($branch at $SHA)"
+
+  build:
+    name: Build and push images
+    needs: prepare
+    if: >-
+      needs.prepare.outputs.kind != 'none' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Choose the deploy role
+        env:
+          KIND: ${{ needs.prepare.outputs.kind }}
+          PROD_ROLE: ${{ vars.AWS_PROD_DEPLOY_ROLE_ARN }}
+          PREVIEW_ROLE: ${{ vars.AWS_PREVIEW_DEPLOY_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          if [ "$KIND" = "prod" ]; then
+            role="$PROD_ROLE"
+          else
+            role="$PREVIEW_ROLE"
+          fi
+          echo "DEPLOY_ROLE_ARN=$role" >> "$GITHUB_ENV"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Images carry the commit SHA and are never rebuilt: production receives
+      # exactly the image the release environment was tested with.
+      - name: Build and push
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          account="$(aws sts get-caller-identity --query Account --output text)"
+          registry="$account.dkr.ecr.$AWS_REGION.amazonaws.com"
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$registry"
+          for image in api web; do
+            docker build \
+              --file "docker/$image.Dockerfile" \
+              --tag "$registry/ksat-$image:$SHA" .
+            docker push "$registry/ksat-$image:$SHA"
+          done
+
+  prod:
+    name: Deploy to production
+    needs: [prepare, build]
+    if: >-
+      needs.prepare.outputs.kind == 'prod' && vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    # Add required reviewers to this environment to gate production deploys.
+    # The AWS role trusts the environment, not the branch.
+    environment: production
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PROD_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read the stack outputs
+        working-directory: infra/envs/prod
+        run: |
+          set -euo pipefail
+          terraform init -input=false -no-color
+          out="$RUNNER_TEMP/outputs.json"
+          terraform output -json > "$out"
+          value() { jq -r "$1.value" "$out"; }
+          {
+            echo "CLUSTER=$(value .cluster_name)"
+            echo "APP_URL=$(value .app_url)"
+            echo "ECR_REGISTRY=$(value .ecr_registry)"
+            echo "MIGRATE_SUBNET=$(value .migrate_subnet_id)"
+            echo "MIGRATE_SG=$(value .migrate_security_group_id)"
+            echo "FAMILY_WEB=$(value .family_names.value.web)"
+            echo "FAMILY_API=$(value .family_names.value.api)"
+            echo "FAMILY_WORKER=$(value .family_names.value.worker)"
+            echo "FAMILY_MIGRATE=$(value .family_names.value.migrate)"
+          } >> "$GITHUB_ENV"
+
+      # Migrations run before the new version serves traffic, and they must be
+      # backward compatible: the previous version is still handling requests.
+      - name: Apply pending migrations
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          node deploy/scripts/ecs-deploy.mjs migrate \
+            --cluster "$CLUSTER" \
+            --family "$FAMILY_MIGRATE" \
+            --image "$ECR_REGISTRY/ksat-api:$SHA" \
+            --subnet "$MIGRATE_SUBNET" \
+            --security-group "$MIGRATE_SG" \
+            --region "$AWS_REGION"
+
+      - name: Roll the services
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          api="$ECR_REGISTRY/ksat-api:$SHA"
+          web="$ECR_REGISTRY/ksat-web:$SHA"
+          node deploy/scripts/ecs-deploy.mjs roll \
+            --cluster "$CLUSTER" \
+            --target "$FAMILY_WEB=$web" \
+            --target "$FAMILY_API=$api" \
+            --target "$FAMILY_WORKER=$api" \
+            --service web --service api --service worker \
+            --region "$AWS_REGION"
+
+      - name: Smoke test
+        run: |
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 5 \
+            "$APP_URL/health/ready"
+
+      - name: Show recent application logs
+        if: failure()
+        run: |
+          aws logs tail "/ecs/ksat-prod" --since 15m \
+            --region "$AWS_REGION" || true
+
+      - name: Summarise
+        if: always()
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          {
+            echo "### Production"
+            echo
+            echo "- Commit: $SHA"
+            echo "- URL: $APP_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  preview:
+    name: Deploy the release environment
+    needs: [prepare, build]
+    if: >-
+      needs.prepare.outputs.kind == 'preview' &&
+      vars.AWS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PREVIEW_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read the preview host outputs
+        working-directory: infra/envs/preview
+        run: |
+          set -euo pipefail
+          terraform init -input=false -no-color
+          out="$RUNNER_TEMP/outputs.json"
+          terraform output -json > "$out"
+          {
+            echo "INSTANCE_ID=$(jq -r .instance_id.value "$out")"
+            echo "ARTIFACTS=$(jq -r .artifacts_bucket.value "$out")"
+            echo "PREVIEW_DOMAIN=$(jq -r .preview_domain.value "$out")"
+          } >> "$GITHUB_ENV"
+
+      - name: Publish the release bundle
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          set -euo pipefail
+          tar -czf "$RUNNER_TEMP/preview-bundle.tar.gz" -C deploy/preview .
+          aws s3 cp "$RUNNER_TEMP/preview-bundle.tar.gz" \
+            "s3://$ARTIFACTS/releases/$SHA/preview-bundle.tar.gz"
+
+      - name: Deploy over SSM
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE: ${{ needs.prepare.outputs.release }}
+        run: |
+          set -euo pipefail
+          key="s3://$ARTIFACTS/releases/$SHA/preview-bundle.tar.gz"
+          command="set -euo pipefail
+          aws s3 cp $key /tmp/ksat-preview.tar.gz
+          mkdir -p /opt/ksat
+          tar -xzf /tmp/ksat-preview.tar.gz -C /opt/ksat
+          bash /opt/ksat/release.sh deploy $RELEASE $SHA"
+          node deploy/scripts/ssm-run.mjs "$INSTANCE_ID" "$command" 900
+
+      - name: Smoke test
+        env:
+          RELEASE: ${{ needs.prepare.outputs.release }}
+        run: |
+          url="https://$RELEASE.$PREVIEW_DOMAIN/health/ready"
+          curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$url"
+
+      - name: Summarise
+        if: always()
+        env:
+          SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE: ${{ needs.prepare.outputs.release }}
+          BRANCH: ${{ needs.prepare.outputs.branch }}
+        run: |
+          {
+            echo "### Release environment"
+            echo
+            echo "- Branch: $BRANCH"
+            echo "- Commit: $SHA"
+            echo "- URL: https://$RELEASE.$PREVIEW_DOMAIN"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -9,3 +9,8 @@
 **/.vite
 **/*.log
 **/*.tsbuildinfo
+
+# Deployment and infrastructure assets are not part of either image.
+infra
+deploy
+.github

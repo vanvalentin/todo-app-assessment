@@ -1,0 +1,82 @@
+name: Migration check
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - apps/api/prisma/migrations/**
+      - apps/api/prisma/schema.prisma
+      - .github/workflows/migration-check.yml
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    name: Report pending migrations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # The report compares two commits, so it needs their full history.
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: "11.18.0"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.12.0"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the migration report
+        id: report
+        # Editing a committed migration fails this step; the report is still
+        # published, and the last step turns the failure into a red check.
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          pnpm --filter @ksat/api exec tsx scripts/migration-report.ts \
+            "$BASE_SHA" "$HEAD_SHA" "$GITHUB_WORKSPACE/migration-report.md"
+
+      - name: Publish the report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          if [ ! -f migration-report.md ]; then
+            printf '### Database migrations\n\n' > migration-report.md
+            printf 'The report could not be generated. See the job log.\n' \
+              >> migration-report.md
+          fi
+          cat migration-report.md >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]; then
+            echo "Fork pull request: the report stays in the summary."
+            exit 0
+          fi
+
+          # One comment per pull request: later pushes update it in place.
+          gh pr comment "$PR_NUMBER" --body-file migration-report.md \
+            --edit-last --create-if-none
+
+      - name: Fail when a committed migration was edited
+        if: steps.report.outcome == 'failure'
+        run: |
+          echo "A committed migration was edited, renamed or deleted."
+          echo "Add a new migration instead of changing one that has run."
+          exit 1

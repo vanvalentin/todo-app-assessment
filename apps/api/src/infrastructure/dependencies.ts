@@ -1,4 +1,4 @@
-import { HeadBucketCommand, S3Client } from "@aws-sdk/client-s3";
+import { HeadBucketCommand, S3Client, type S3ClientConfig } from "@aws-sdk/client-s3";
 import { PrismaClient } from "@prisma/client";
 import { Redis } from "ioredis";
 import type { Environment } from "../config/env.js";
@@ -12,6 +12,22 @@ export interface Infrastructure {
   close(): Promise<void>;
 }
 
+function s3ClientConfig(environment: Environment): S3ClientConfig {
+  const config: S3ClientConfig = {
+    region: environment.S3_REGION,
+    forcePathStyle: environment.S3_FORCE_PATH_STYLE,
+  };
+  if (environment.S3_ENDPOINT !== undefined) config.endpoint = environment.S3_ENDPOINT;
+  // With S3_AUTH=iam the SDK default chain supplies short-lived role credentials.
+  if (environment.S3_AUTH === "static") {
+    config.credentials = {
+      accessKeyId: environment.S3_ACCESS_KEY_ID ?? "anonymous",
+      secretAccessKey: environment.S3_SECRET_ACCESS_KEY ?? "anonymous",
+    };
+  }
+  return config;
+}
+
 export function createInfrastructure(environment: Environment): Infrastructure {
   const prisma = new PrismaClient({
     datasources: { db: { url: environment.DATABASE_URL } },
@@ -23,15 +39,7 @@ export function createInfrastructure(environment: Environment): Infrastructure {
     connectTimeout: environment.HEALTH_CHECK_TIMEOUT_MS,
     commandTimeout: environment.HEALTH_CHECK_TIMEOUT_MS,
   });
-  const s3 = new S3Client({
-    endpoint: environment.S3_ENDPOINT,
-    region: environment.S3_REGION,
-    forcePathStyle: environment.S3_FORCE_PATH_STYLE,
-    credentials: {
-      accessKeyId: environment.S3_ACCESS_KEY_ID ?? "anonymous",
-      secretAccessKey: environment.S3_SECRET_ACCESS_KEY ?? "anonymous",
-    },
-  });
+  const s3 = new S3Client(s3ClientConfig(environment));
 
   const healthChecks: HealthChecks = {
     postgres: async () => {

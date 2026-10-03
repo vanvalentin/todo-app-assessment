@@ -25,6 +25,13 @@ playwright-report/
 # Private assessment notes (one Markdown file per delivery phase)
 phase-notes/
 
+# Terraform state and providers (see infra/README.md)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
+
 # Editor and operating-system files
 .DS_Store
 Thumbs.db
